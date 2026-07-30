@@ -167,12 +167,30 @@ chrome.webNavigation.onCommitted.addListener((details) => {
   void maybeRedirect(details.tabId, details.url);
 });
 
+// PRs the user deliberately asked to open in their own tab (from the popup).
+// Without this the dedupe below would close the new tab the instant it opens.
+const intentionalDuplicates = new Map(); // key -> expiry timestamp
+const INTENTIONAL_TTL_MS = 15_000;
+
+function markIntentionalDuplicate(key) {
+  intentionalDuplicates.set(key, Date.now() + INTENTIONAL_TTL_MS);
+}
+
+function consumeIntentionalDuplicate(key) {
+  const expiry = intentionalDuplicates.get(key);
+  if (expiry === undefined) return false;
+  intentionalDuplicates.delete(key);
+  return expiry > Date.now();
+}
+
 async function maybeRedirect(newTabId, url) {
   const settings = await getSettings();
   if (!settings.dedupe) return;
 
   const pr = parseTrackedUrl(url);
   if (!pr) return;
+
+  if (consumeIntentionalDuplicate(pr.key)) return;
 
   const existing = await findPrTab(pr.key, newTabId, url);
   if (!existing) return;
@@ -380,6 +398,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         break;
       }
       case 'focus-pr': {
+        if (message.newTab && message.url) {
+          // Explicit "open in its own tab" — bypass dedupe for this one.
+          markIntentionalDuplicate(message.key);
+          await chrome.tabs.create({ url: message.url, active: true });
+          sendResponse({ ok: true });
+          break;
+        }
         const tab = await findPrTab(message.key);
         if (tab) {
           // Reload when there are unseen updates so the user lands on fresh content.

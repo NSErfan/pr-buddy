@@ -654,9 +654,23 @@ function renderOthers(prState, openTabs, currentKey) {
     btn.append(dot, col);
     const badge = stateBadge(entry, updates);
     if (badge) btn.append(el('span', `badge ${badge.cls}`, badge.text));
-    btn.addEventListener('click', async () => {
-      await send({ type: 'focus-pr', key: row.key, url: entry?.url || row.url });
+
+    const open = async (newTab) => {
+      await send({
+        type: 'focus-pr',
+        key: row.key,
+        url: entry?.url || row.url,
+        newTab,
+      });
       window.close();
+    };
+    btn.title = 'Click to switch to this pull request · ⌘/Ctrl-click for a new tab';
+    btn.addEventListener('click', (e) => void open(e.metaKey || e.ctrlKey || e.shiftKey));
+    // Middle-click, like a browser link.
+    btn.addEventListener('auxclick', (e) => {
+      if (e.button !== 1) return;
+      e.preventDefault();
+      void open(true);
     });
     othersList.append(btn);
   }
