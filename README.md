@@ -27,6 +27,11 @@ jumping to is inside that range, its anchor doesn't exist yet, so the page
 jumps around. A content script clicks "Load more…" until the whole
 conversation is visible, then scrolls to the anchor from the link.
 
+**People filter.** The popup shows an avatar stack of everyone who spoke in
+the PR, most-involved first. Tap faces to see only the threads those people
+took part in (multi-select is a union); the status chips recount against the
+selection, and the choice persists per PR.
+
 **Update tracking.** Every few minutes the extension asks the GitHub API about
 each PR you have a tab open for. If comments, review comments, or commits
 arrived since you last looked at that tab, the toolbar badge shows how many

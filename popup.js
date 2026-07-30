@@ -49,15 +49,15 @@ let sortMode = localStorage.getItem('focus-pr-sort') || 'timeline';
 
 const VIEW_KEY = 'focus-pr-view';
 let viewPrKey = null;
-let viewState = { expanded: [], scroll: 0, sel: '' };
+let viewState = { expanded: [], scroll: 0, sel: '', people: [] };
 
 function loadViewState(prKey) {
   viewPrKey = prKey;
   try {
     const all = JSON.parse(localStorage.getItem(VIEW_KEY) || '{}');
-    viewState = { expanded: [], scroll: 0, sel: '', ...(all[prKey] || {}) };
+    viewState = { expanded: [], scroll: 0, sel: '', people: [], ...(all[prKey] || {}) };
   } catch {
-    viewState = { expanded: [], scroll: 0, sel: '' };
+    viewState = { expanded: [], scroll: 0, sel: '', people: [] };
   }
 }
 
@@ -183,6 +183,99 @@ function face(author, src) {
 
 function isBot(author) {
   return /\[bot\]$/i.test(author || '') || /^copilot$/i.test(author || '');
+}
+
+// ---- people filter ---------------------------------------------------------
+
+const whoBar = document.getElementById('who-bar');
+const whoStack = document.getElementById('who-stack');
+const whoSummary = document.getElementById('who-summary');
+const whoClear = document.getElementById('who-clear');
+
+let selectedPeople = new Set();
+
+function itemAuthors(item) {
+  if (item.type === 'thread') return item.comments.map((c) => c.author).filter(Boolean);
+  return item.author ? [item.author] : [];
+}
+
+function matchesPeople(item) {
+  if (!selectedPeople.size) return true;
+  return itemAuthors(item).some((a) => selectedPeople.has(a));
+}
+
+// Everyone who spoke in this PR, most-involved first, with an avatar and the
+// number of threads/comments they appear in.
+function collectPeople(items) {
+  const byName = new Map();
+  for (const item of items) {
+    for (const author of new Set(itemAuthors(item))) {
+      let p = byName.get(author);
+      if (!p) {
+        p = { name: author, count: 0, avatar: '' };
+        byName.set(author, p);
+      }
+      p.count++;
+      if (!p.avatar) {
+        const src =
+          item.type === 'thread'
+            ? item.comments.find((c) => c.author === author && c.avatar)?.avatar
+            : item.avatar;
+        if (src) p.avatar = src;
+      }
+    }
+  }
+  return [...byName.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
+function shortName(name) {
+  return (name || '').replace(/\[bot\]$/i, '').replace(/-BandLab$/i, '');
+}
+
+function renderWho(people, onChange) {
+  whoBar.hidden = people.length < 2; // nothing to filter by with a single voice
+  if (whoBar.hidden) return;
+
+  whoStack.textContent = '';
+  for (const p of people) {
+    const on = selectedPeople.has(p.name);
+    const btn = el('button', 'who-face');
+    btn.style.background = AVATAR_PALETTE[hashName(p.name) % AVATAR_PALETTE.length];
+    btn.title = `${p.name} · ${p.count} thread${p.count === 1 ? '' : 's'}`;
+    btn.setAttribute('aria-pressed', String(on));
+    if (on) btn.classList.add('on');
+    else if (selectedPeople.size) btn.classList.add('dim');
+    if (p.avatar) {
+      const img = el('img');
+      img.alt = '';
+      img.src = p.avatar;
+      img.addEventListener('error', () => {
+        img.remove();
+        btn.textContent = initials(p.name);
+      }, { once: true });
+      btn.append(img);
+    } else {
+      btn.textContent = initials(p.name);
+    }
+    btn.addEventListener('click', () => {
+      if (selectedPeople.has(p.name)) selectedPeople.delete(p.name);
+      else selectedPeople.add(p.name);
+      renderWho(people, onChange);
+      onChange();
+    });
+    whoStack.append(btn);
+  }
+
+  const chosen = people.filter((p) => selectedPeople.has(p.name)).map((p) => shortName(p.name));
+  whoSummary.textContent = chosen.length
+    ? `Threads involving ${chosen.join(', ')}`
+    : 'Tap a face to see only their threads';
+  whoClear.hidden = !chosen.length;
+  whoClear.onclick = () => {
+    selectedPeople.clear();
+    renderWho(people, onChange);
+    onChange();
+  };
 }
 
 // ---- navigation ------------------------------------------------------------
@@ -363,7 +456,7 @@ function renderFilterBar(items) {
       activeFilter = f.key;
       localStorage.setItem('focus-pr-filter', f.key);
       renderFilterBar(items);
-      renderItems();
+      renderItems(items);
     });
     filterBar.append(btn);
   }
@@ -384,20 +477,40 @@ function renderOutline(tab, pr, prState, outline, cachedAt) {
   const entry = prState[pr.key];
   setNewPill(describeUpdates(entry));
 
-  renderFilterBar(outline.items);
+  selectedPeople = new Set(viewState.people || []);
+  const people = collectPeople(outline.items);
+  // Drop selections for people who are no longer in the conversation.
+  for (const name of [...selectedPeople]) {
+    if (!people.some((p) => p.name === name)) selectedPeople.delete(name);
+  }
+
+  renderWho(people, () => {
+    saveViewState({ people: [...selectedPeople] });
+    refresh();
+  });
   listMeta.hidden = false;
 
-  renderItems = () => {
+  // The people filter applies first; the status chips count what survives it.
+  function refresh() {
+    const scoped = outline.items.filter(matchesPeople);
+    renderFilterBar(scoped);
+    renderItems(scoped);
+  }
+
+  renderItems = (scoped = outline.items.filter(matchesPeople)) => {
     const filter = FILTERS.find((f) => f.key === activeFilter) || FILTERS[0];
-    let items = outline.items.filter(filter.match);
+    let items = scoped.filter(filter.match);
     if (sortMode === 'recent') items = [...items].sort((a, b) => lastActivity(b) - lastActivity(a));
 
-    const threads = outline.items.filter((i) => i.type === 'thread');
+    const threads = scoped.filter((i) => i.type === 'thread');
     const shownThreads = items.filter((i) => i.type === 'thread').length;
+    const totalThreads = outline.items.filter((i) => i.type === 'thread').length;
     visibleLabel.textContent =
       activeFilter === 'comments'
         ? `${items.length} comments & reviews`
-        : `${shownThreads} of ${threads.length} threads`;
+        : selectedPeople.size
+          ? `${shownThreads} of ${totalThreads} threads · filtered by people`
+          : `${shownThreads} of ${totalThreads} threads`;
     sortToggle.textContent = sortMode === 'recent' ? 'Recent ↓' : 'Timeline ↓';
     resolvedSummary.textContent = threads.length
       ? `${threads.filter((t) => t.resolved).length}/${threads.length} resolved`
@@ -421,7 +534,11 @@ function renderOutline(tab, pr, prState, outline, cachedAt) {
       outlineEl.append(card);
     }
     if (!items.length && !outline.indexing) {
-      outlineEl.append(el('div', 'empty', 'Nothing here — every thread in this filter is handled.'));
+      outlineEl.append(
+        el('div', 'empty', selectedPeople.size
+          ? 'No threads here involve the selected people.'
+          : 'Nothing here — every thread in this filter is handled.'),
+      );
     }
     selIndex = -1;
     if (viewState.sel) {
@@ -429,7 +546,7 @@ function renderOutline(tab, pr, prState, outline, cachedAt) {
       if (i >= 0) selectCard(i);
     }
   };
-  renderItems();
+  refresh();
 
   if (!scrollRestored) {
     scrollRestored = true;
