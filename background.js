@@ -1,3 +1,5 @@
+importScripts('cache.js');
+
 // GitHub Focus PR — background service worker.
 //
 // Responsibilities:
@@ -335,17 +337,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'poll') void pollUpdates();
 });
 
-// Thread/outline caches written by the content script expire after 3 days.
-const CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000;
-
+// Thread/outline caches written by the content script expire after 3 days;
+// the shared expiry rules live in cache.js.
 async function pruneCaches() {
   const all = await chrome.storage.local.get(null);
-  const now = Date.now();
-  const expired = Object.keys(all).filter(
-    (k) =>
-      (k.startsWith('threadCache:') || k.startsWith('outlineCache:')) &&
-      now - (all[k]?.savedAt || 0) > CACHE_TTL_MS,
-  );
+  const expired = GFPCache.expiredCacheKeys(all, Date.now());
   if (expired.length) await chrome.storage.local.remove(expired);
 }
 

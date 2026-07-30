@@ -267,7 +267,7 @@ async function cachedOutline(key) {
   try {
     const storageKey = `outlineCache:${key}`;
     const { [storageKey]: entry } = await chrome.storage.local.get(storageKey);
-    if (entry?.outline && Date.now() - entry.savedAt < 3 * 24 * 60 * 60 * 1000) return entry;
+    if (entry?.outline && GFPCache.isFresh(entry)) return entry;
   } catch {
     // Storage unavailable: no cache.
   }

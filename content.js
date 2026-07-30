@@ -225,17 +225,8 @@
   // comment ids hidden inside. Pointing the fragment's src at that URL loads
   // the thread invisibly (it stays visually collapsed).
 
-  // A thread container is loaded once it holds an actual comment element.
-  // (Checking for include-fragment is wrong: loaded content contains nested
-  // fragments of its own — edit forms, menus.)
-  function threadLoaded(c) {
-    return !!c.querySelector('[id^="discussion_r"]');
-  }
-
   function deferredThreadContainers() {
-    return [...document.querySelectorAll('[data-deferred-content-url]')].filter(
-      (c) => !threadLoaded(c) && c.querySelector('include-fragment'),
-    );
+    return self.GFPCache.deferredThreadContainers(document);
   }
 
   async function loadDeferredContainer(container) {
@@ -318,83 +309,35 @@
     );
   }
 
-  // ---- thread cache -------------------------------------------------------
-  // Loaded thread fragments are cached per PR so a reload doesn't refetch
-  // them. Validity is structural, not just time-based: a container's
-  // data-hidden-comment-ids (server-rendered fresh on every load) is the
-  // fingerprint — any new reply changes the id list and forces a refetch.
+  // ---- thread cache (logic lives in cache.js, loaded before this file) ----
+  // URLs whose content came from cache this load accumulate here across the
+  // restore passes; on save their original fetchedAt is carried forward.
 
-  const CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000;
-
-  function prCacheKey(prefix) {
-    const m = location.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
-    return m ? `${prefix}:${m[1]}/${m[2]}#${m[3]}`.toLowerCase() : null;
-  }
-
-  // URLs whose content came from cache this load — their original fetch time
-  // must be carried forward on save, so a fragment's age is measured from
-  // when GitHub actually served it, not from the last visit. Otherwise
-  // frequent visits would keep sliding the expiry and an edited comment in
-  // an untouched thread could stay stale forever.
+  const Cache = self.GFPCache;
   const restoredUrls = new Set();
 
   async function restoreCachedThreads() {
-    const key = prCacheKey('threadCache');
-    if (!key) return 0;
-    try {
-      const { [key]: entry } = await chrome.storage.local.get(key);
-      if (!entry?.fragments) return 0;
-      let restored = 0;
-      for (const c of document.querySelectorAll('[data-deferred-content-url]')) {
-        if (threadLoaded(c)) continue;
-        const url = c.getAttribute('data-deferred-content-url');
-        const cached = entry.fragments[url];
-        if (!cached) continue;
-        const age = Date.now() - (cached.fetchedAt || entry.savedAt || 0);
-        if (age > CACHE_TTL_MS) continue; // too old: refetch fresh
-        if (cached.ids === (c.getAttribute('data-hidden-comment-ids') || '')) {
-          c.innerHTML = cached.html;
-          restoredUrls.add(url);
-          restored++;
-        }
-      }
-      return restored;
-    } catch {
-      return 0;
-    }
+    const key = Cache.prCacheKey('threadCache', location.pathname);
+    const result = await Cache.restoreCachedThreads(document, key, {
+      storage: chrome.storage.local,
+    });
+    for (const u of result.restoredUrls) restoredUrls.add(u);
+    return result.restored;
   }
 
   async function saveThreadCache() {
-    const key = prCacheKey('threadCache');
+    const key = Cache.prCacheKey('threadCache', location.pathname);
     if (!key) return;
-    let prev = {};
-    try {
-      prev = (await chrome.storage.local.get(key))[key]?.fragments || {};
-    } catch {
-      // No previous cache readable: treat everything as freshly fetched.
-    }
-    const fragments = {};
-    for (const c of document.querySelectorAll('[data-deferred-content-url]')) {
-      if (!threadLoaded(c)) continue;
-      const url = c.getAttribute('data-deferred-content-url');
-      if (url) {
-        fragments[url] = {
-          ids: c.getAttribute('data-hidden-comment-ids') || '',
-          html: c.innerHTML,
-          fetchedAt: restoredUrls.has(url) ? prev[url]?.fetchedAt || Date.now() : Date.now(),
-        };
-      }
-    }
     const outline = buildOutline();
     outline.indexing = false; // saved snapshots are complete by definition
-    try {
-      await chrome.storage.local.set({
-        [key]: { savedAt: Date.now(), fragments },
-        [prCacheKey('outlineCache')]: { savedAt: Date.now(), outline },
-      });
-    } catch {
-      // Quota or storage failure: caching is best-effort.
-    }
+    await Cache.saveThreadCache(
+      document,
+      key,
+      Cache.prCacheKey('outlineCache', location.pathname),
+      outline,
+      restoredUrls,
+      { storage: chrome.storage.local },
+    );
   }
 
   // Single-flight: concurrent callers share the same expansion pass.

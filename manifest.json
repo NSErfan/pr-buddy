@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GitHub Focus PR",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "description": "Keeps each GitHub pull request in a single tab: external links reuse the existing tab, and a badge shows which open PRs have new activity.",
   "permissions": [
     "tabs",
@@ -24,6 +24,7 @@
         "https://github.com/*"
       ],
       "js": [
+        "cache.js",
         "content.js"
       ],
       "run_at": "document_idle"
