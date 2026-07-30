@@ -23,7 +23,9 @@
 
   function prCacheKey(prefix, pathname) {
     const m = pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/(\d+)(?:\/|$)/);
-    return m ? `${prefix}:${m[1]}/${m[2]}#${m[3]}`.toLowerCase() : null;
+    // Lowercase only the repo part — the prefix must keep its case, because
+    // consumers (the popup) construct lookup keys as `outlineCache:` + prKey.
+    return m ? `${prefix}:` + `${m[1]}/${m[2]}#${m[3]}`.toLowerCase() : null;
   }
 
   function threadLoaded(container) {
@@ -118,11 +120,17 @@
   // Which storage keys the background worker should prune. Only cache keys —
   // settings, prState, and anything else are never touched.
   function expiredCacheKeys(allItems, now = Date.now()) {
-    return Object.keys(allItems).filter(
-      (k) =>
-        (k.startsWith('threadCache:') || k.startsWith('outlineCache:')) &&
-        now - (allItems[k]?.savedAt || 0) > CACHE_TTL_MS,
-    );
+    const CACHE_PREFIXES = [
+      'threadCache:', 'outlineCache:',
+      // Pre-0.19.2 the prefix itself was lowercased; prune those legacy
+      // entries unconditionally — nothing can read them any more.
+      'threadcache:', 'outlinecache:',
+    ];
+    return Object.keys(allItems).filter((k) => {
+      if (!CACHE_PREFIXES.some((p) => k.startsWith(p))) return false;
+      if (k.startsWith('threadcache:') || k.startsWith('outlinecache:')) return true;
+      return now - (allItems[k]?.savedAt || 0) > CACHE_TTL_MS;
+    });
   }
 
   return {

@@ -76,17 +76,29 @@ const KEY = 'threadCache:owner/repo#1';
 // ---- prCacheKey ------------------------------------------------------------
 
 describe('prCacheKey', () => {
-  test('derives a lowercased key from a PR path', () => {
+  test('lowercases the repo part but preserves the prefix case', () => {
     assert.equal(
       Cache.prCacheKey('threadCache', '/BandLab/BandLab-iOS/pull/22279'),
-      'threadcache:bandlab/bandlab-ios#22279',
+      'threadCache:bandlab/bandlab-ios#22279',
     );
   });
 
   test('works for PR subpages (files, commits)', () => {
     assert.equal(
       Cache.prCacheKey('outlineCache', '/o/r/pull/5/files'),
-      'outlinecache:o/r#5',
+      'outlineCache:o/r#5',
+    );
+  });
+
+  test('CONTRACT: matches the popup lookup `outlineCache:` + lowercased pr key', () => {
+    // The popup builds its lookup key by hand from parsePrUrl's pr.key; the
+    // 0.19.1 bug was this contract silently breaking (prefix lowercased),
+    // which made cached outlines invisible in production while previews
+    // with permissive mocks stayed green.
+    const prKey = 'bandlab/bandlab-ios#22234'; // parsePrUrl lowercases like this
+    assert.equal(
+      Cache.prCacheKey('outlineCache', '/BandLab/bandlab-iOS/pull/22234/changes'),
+      `outlineCache:${prKey}`,
     );
   });
 
@@ -389,6 +401,19 @@ describe('expiredCacheKeys / isFresh', () => {
       'outlineCache:a/b#1',
       'threadCache:a/b#1',
       'threadCache:broken',
+    ]);
+  });
+
+  test('legacy lowercase-prefix entries are pruned regardless of age', () => {
+    const now = 10 * DAY;
+    const all = {
+      'outlinecache:a/b#1': { savedAt: now },  // fresh but unreadable: prune
+      'threadcache:a/b#1': { savedAt: now },
+      'outlineCache:a/b#2': { savedAt: now },  // current format, fresh: keep
+    };
+    assert.deepEqual(Cache.expiredCacheKeys(all, now).sort(), [
+      'outlinecache:a/b#1',
+      'threadcache:a/b#1',
     ]);
   });
 
