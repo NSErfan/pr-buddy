@@ -462,6 +462,11 @@
     const root = document.querySelector('.js-discussion') || document;
     const items = [];
     const seen = new Set();
+    // Review-comment id (numeric) -> the thread item that owns it. GitHub
+    // renders the same conversation in several containers (under the review,
+    // again as a later timeline entry), each holding a different subset of
+    // the comments — anything sharing a comment id is one conversation.
+    const threadIndex = new Map();
     const nodes = root.querySelectorAll(
       '[id^="issuecomment-"], [id^="pullrequestreview-"], review-thread-collapsible, .js-resolvable-timeline-thread-container',
     );
@@ -508,28 +513,47 @@
         const commentEls = [...node.querySelectorAll('[id^="discussion_r"]')].filter((e) =>
           /^discussion_r\d+$/.test(e.id),
         );
-        // GitHub can render the same thread container twice — dedupe whole
-        // threads by identity, never individual comments (a global comment
-        // dedupe leaves the duplicate thread with an empty, unexpandable
-        // comment list).
-        const sig = hiddenIds[0] || commentEls[0]?.id;
-        if (!sig || seen.has(`thread:${sig}`)) continue;
-        seen.add(`thread:${sig}`);
+        const loadedIds = commentEls.map((e) => e.id.replace('discussion_r', ''));
+        const allIds = [...new Set([...loadedIds, ...hiddenIds])];
+        if (!allIds.length) continue;
+        const resolved = node.getAttribute('data-resolved') === 'true';
+        const outdated = [...node.querySelectorAll('.Label')].some((l) =>
+          /outdated/i.test(l.textContent || ''),
+        );
+        const existing = allIds.map((id) => threadIndex.get(id)).find(Boolean);
+        if (existing) {
+          // Another rendering of a conversation we already emitted: absorb
+          // any comments this copy has that the first one didn't.
+          for (const e of commentEls) {
+            const num = e.id.replace('discussion_r', '');
+            if (!threadIndex.has(num)) {
+              existing.comments.push(commentInfo(e));
+              threadIndex.set(num, existing);
+            }
+          }
+          existing.comments.sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+          existing.count = Math.max(existing.count, existing.comments.length);
+          existing.anchor = existing.anchor || existing.comments[0]?.id || '';
+          // A conversation is open if any rendering says so; outdated sticks.
+          existing.resolved = existing.resolved && resolved;
+          existing.outdated = existing.outdated || outdated;
+          for (const id of allIds) if (!threadIndex.has(id)) threadIndex.set(id, existing);
+          continue;
+        }
         const comments = commentEls.map(commentInfo);
-        // Content not loaded yet (indexing still running): fall back to the
-        // hidden-comment count so the popup can still show the thread.
-        if (!comments.length && !hiddenIds.length) continue;
-        items.push({
+        const item = {
           type: 'thread',
           path,
-          resolved: node.getAttribute('data-resolved') === 'true',
-          outdated: [...node.querySelectorAll('.Label')].some((l) =>
-            /outdated/i.test(l.textContent || ''),
-          ),
+          resolved,
+          outdated,
           comments,
+          // Content not loaded yet (indexing still running): fall back to
+          // the hidden-comment count so the popup can still show the thread.
           count: comments.length || hiddenIds.length,
           anchor: comments[0]?.id || (hiddenIds[0] ? `discussion_r${hiddenIds[0]}` : ''),
-        });
+        };
+        items.push(item);
+        for (const id of allIds) threadIndex.set(id, item);
       }
     }
     return {
