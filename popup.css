@@ -1,5 +1,5 @@
 :root {
-  --accent: oklch(0.55 0.16 275);
+  --accent: #1f883d;
   --bg: #f7f6f4;
   --card: #fffefd;
   --card-hover: #fbfaf8;
@@ -30,7 +30,7 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --accent: oklch(0.7 0.14 275);
+    --accent: #3fb950;
     --bg: #141318;
     --card: #1d1c22;
     --card-hover: #222128;
@@ -441,6 +441,9 @@ header {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 2px 12px 16px;
+}
+
+#outline {
   display: flex;
   flex-direction: column;
   gap: 8px;
