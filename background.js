@@ -426,6 +426,40 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ ok: true });
         break;
       }
+      case 'index-pr': {
+        // Index a PR's conversation in a background tab without disturbing
+        // the tab the user is on (e.g. Files changed). The temp tab must be
+        // marked as an intentional duplicate or the deduper would close it
+        // and navigate the user's tab away — the opposite of the point.
+        if (!message.key || !message.url) {
+          sendResponse({ ok: false });
+          break;
+        }
+        markIntentionalDuplicate(message.key);
+        const temp = await chrome.tabs.create({ url: message.url, active: false });
+        const pollMs = message.pollMs || 2000;
+        const deadline = Date.now() + (message.timeoutMs || 120_000);
+        let indexed = false;
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, pollMs));
+          try {
+            const outline = await chrome.tabs.sendMessage(temp.id, { type: 'get-outline' });
+            if (outline?.ok && !outline.subpage && !outline.indexing) {
+              indexed = true;
+              break;
+            }
+          } catch {
+            // Content script not up yet — keep waiting.
+          }
+        }
+        try {
+          await chrome.tabs.remove(temp.id);
+        } catch {
+          // Already gone.
+        }
+        sendResponse({ ok: indexed });
+        break;
+      }
       case 'settings-changed': {
         await schedulePolling();
         await pollUpdates();

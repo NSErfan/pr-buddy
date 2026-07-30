@@ -70,7 +70,10 @@ GitHub's Files-changed view (`/changes`) is a React app with none of the
 conversation DOM, so it cannot be indexed directly. The popup instead serves
 the PR's cached conversation index there — search, filters, and people all
 work — and clicking a comment flips the tab to the Conversation view landed
-on that comment. Visiting the tab never overwrites the cached index.
+on that comment. Visiting the tab never overwrites the cached index. If the
+PR was never indexed, the popup offers "Index in background", which loads
+the conversation in a hidden tab, indexes it, closes it, and fills the popup
+in place — no need to leave the diff.
 
 ## Icons
 

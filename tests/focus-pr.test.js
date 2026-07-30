@@ -167,3 +167,46 @@ describe('deliberate duplicates survive dedupe', () => {
     assert.deepEqual(plain(bg.calls.removed), [second.id]);
   });
 });
+
+describe('index-pr (background indexing for the Files tab)', () => {
+  test('opens an inactive tab, waits for indexing, closes it, reports ok', async () => {
+    const bg = loadBackground({ tabs: [] });
+    let polls = 0;
+    bg.sandbox.chrome.tabs.sendMessage = async () => {
+      polls++;
+      if (polls < 3) throw new Error('not ready');
+      return { ok: true, subpage: false, indexing: false };
+    };
+    const res = await sendFocus(bg, {
+      type: 'index-pr', key: 'acme/app#2', url: PR_B, pollMs: 10, timeoutMs: 2000,
+    });
+    assert.equal(plain(res).ok, true);
+    assert.deepEqual(plain(bg.calls.created), [{ url: PR_B, active: false }]);
+    assert.equal(bg.calls.removed.length, 1, 'temp tab must be closed');
+    assert.ok(polls >= 3);
+  });
+
+  test('the temp tab survives the deduper (intentional duplicate)', async () => {
+    const bg = loadBackground({ tabs: [{ id: 2, url: PR_B, windowId: 11 }] });
+    bg.sandbox.chrome.tabs.sendMessage = async () => ({ ok: true, subpage: false, indexing: false });
+    const done = sendFocus(bg, {
+      type: 'index-pr', key: 'acme/app#2', url: PR_B, pollMs: 10, timeoutMs: 2000,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    const temp = bg.tabs.find((t) => t.id >= 1000);
+    bg.calls.onTabCreated({ id: temp.id, url: PR_B, windowId: 1 });
+    await done;
+    // removed exactly once — by index-pr's cleanup, not by the deduper
+    assert.equal(bg.calls.removed.length, 1);
+  });
+
+  test('reports failure when indexing never completes', async () => {
+    const bg = loadBackground({ tabs: [] });
+    bg.sandbox.chrome.tabs.sendMessage = async () => { throw new Error('never ready'); };
+    const res = await sendFocus(bg, {
+      type: 'index-pr', key: 'acme/app#2', url: PR_B, pollMs: 10, timeoutMs: 100,
+    });
+    assert.equal(plain(res).ok, false);
+    assert.equal(bg.calls.removed.length, 1, 'temp tab still cleaned up');
+  });
+});

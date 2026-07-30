@@ -745,18 +745,35 @@ function renderOutline(tab, pr, prState, outline, cachedAt, mode) {
   };
 }
 
-function renderIndexPrompt(tab, pr) {
+function renderIndexPrompt(tab, pr, prState) {
   prHead.hidden = false;
   currentTitle.textContent = tab.title?.replace(/ · Pull Request.*$/, '') || 'This pull request';
-  const notice = el('div', 'notice', 'This PR isn’t indexed yet — open its Conversation tab once.');
-  const btn = el('button', '', 'Open Conversation');
-  btn.addEventListener('click', async () => {
-    await chrome.tabs.update(tab.id, {
-      url: `https://github.com/${pr.owner}/${pr.repo}/pull/${pr.number}`,
-    });
+  const conversationUrl = `https://github.com/${pr.owner}/${pr.repo}/pull/${pr.number}`;
+  const notice = el('div', 'notice', 'This PR isn’t indexed yet.');
+
+  const bg = el('button', 'btn-accent', 'Index in background');
+  bg.style.marginLeft = '6px';
+  bg.addEventListener('click', async () => {
+    notice.textContent = 'Indexing in a background tab — this view fills in when it’s done…';
+    const res = await send({ type: 'index-pr', key: pr.key, url: conversationUrl });
+    const cached = await cachedOutline(pr.key);
+    if (cached) {
+      window.__gfpOutlineUrl = cached.outline.url;
+      renderOutline(tab, pr, prState, cached.outline, cached.savedAt, 'subpage');
+    } else {
+      notice.textContent = res?.ok
+        ? 'This PR has no conversation yet.'
+        : 'Indexing didn’t finish — try opening the Conversation tab directly.';
+    }
+  });
+
+  const go = el('button', '', 'Open Conversation');
+  go.addEventListener('click', async () => {
+    await chrome.tabs.update(tab.id, { url: conversationUrl });
     window.close();
   });
-  notice.append(btn);
+
+  notice.append(bg, go);
   outlineEl.textContent = '';
   outlineEl.append(notice);
 }
@@ -938,7 +955,7 @@ async function load() {
         if (cached) {
           window.__gfpOutlineUrl = cached.outline.url;
           renderOutline(activeTab, pr, prState, cached.outline, cached.savedAt, 'subpage');
-        } else renderIndexPrompt(activeTab, pr);
+        } else renderIndexPrompt(activeTab, pr, prState);
       } else {
         window.__gfpOutlineUrl = outline.url;
         if (outline.indexing && !outline.items.length) {
