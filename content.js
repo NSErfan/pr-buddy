@@ -331,18 +331,30 @@
     return m ? `${prefix}:${m[1]}/${m[2]}#${m[3]}`.toLowerCase() : null;
   }
 
+  // URLs whose content came from cache this load — their original fetch time
+  // must be carried forward on save, so a fragment's age is measured from
+  // when GitHub actually served it, not from the last visit. Otherwise
+  // frequent visits would keep sliding the expiry and an edited comment in
+  // an untouched thread could stay stale forever.
+  const restoredUrls = new Set();
+
   async function restoreCachedThreads() {
     const key = prCacheKey('threadCache');
     if (!key) return 0;
     try {
       const { [key]: entry } = await chrome.storage.local.get(key);
-      if (!entry?.fragments || Date.now() - entry.savedAt > CACHE_TTL_MS) return 0;
+      if (!entry?.fragments) return 0;
       let restored = 0;
       for (const c of document.querySelectorAll('[data-deferred-content-url]')) {
         if (threadLoaded(c)) continue;
-        const cached = entry.fragments[c.getAttribute('data-deferred-content-url')];
-        if (cached && cached.ids === (c.getAttribute('data-hidden-comment-ids') || '')) {
+        const url = c.getAttribute('data-deferred-content-url');
+        const cached = entry.fragments[url];
+        if (!cached) continue;
+        const age = Date.now() - (cached.fetchedAt || entry.savedAt || 0);
+        if (age > CACHE_TTL_MS) continue; // too old: refetch fresh
+        if (cached.ids === (c.getAttribute('data-hidden-comment-ids') || '')) {
           c.innerHTML = cached.html;
+          restoredUrls.add(url);
           restored++;
         }
       }
@@ -355,6 +367,12 @@
   async function saveThreadCache() {
     const key = prCacheKey('threadCache');
     if (!key) return;
+    let prev = {};
+    try {
+      prev = (await chrome.storage.local.get(key))[key]?.fragments || {};
+    } catch {
+      // No previous cache readable: treat everything as freshly fetched.
+    }
     const fragments = {};
     for (const c of document.querySelectorAll('[data-deferred-content-url]')) {
       if (!threadLoaded(c)) continue;
@@ -363,6 +381,7 @@
         fragments[url] = {
           ids: c.getAttribute('data-hidden-comment-ids') || '',
           html: c.innerHTML,
+          fetchedAt: restoredUrls.has(url) ? prev[url]?.fetchedAt || Date.now() : Date.now(),
         };
       }
     }
