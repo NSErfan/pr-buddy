@@ -49,15 +49,15 @@ let sortMode = localStorage.getItem('focus-pr-sort') || 'timeline';
 
 const VIEW_KEY = 'focus-pr-view';
 let viewPrKey = null;
-let viewState = { expanded: [], scroll: 0, sel: '', people: [] };
+let viewState = { expanded: [], scroll: 0, sel: '', people: [], query: '' };
 
 function loadViewState(prKey) {
   viewPrKey = prKey;
   try {
     const all = JSON.parse(localStorage.getItem(VIEW_KEY) || '{}');
-    viewState = { expanded: [], scroll: 0, sel: '', people: [], ...(all[prKey] || {}) };
+    viewState = { expanded: [], scroll: 0, sel: '', people: [], query: '', ...(all[prKey] || {}) };
   } catch {
-    viewState = { expanded: [], scroll: 0, sel: '', people: [] };
+    viewState = { expanded: [], scroll: 0, sel: '', people: [], query: '' };
   }
 }
 
@@ -183,6 +183,124 @@ function face(author, src) {
 
 function isBot(author) {
   return /\[bot\]$/i.test(author || '') || /^copilot$/i.test(author || '');
+}
+
+// ---- search ----------------------------------------------------------------
+// Every whitespace-separated term must appear somewhere in the item (file
+// name, path, comment text, or an author's name) — so "steven cancel" finds
+// threads where Steven talked about cancellation.
+
+const searchBar = document.getElementById('search-bar');
+const searchBox = document.getElementById('search-box');
+const searchInput = document.getElementById('search-input');
+const searchClear = document.getElementById('search-clear');
+const searchHint = document.getElementById('search-hint');
+const resultBar = document.getElementById('result-bar');
+const resultLabel = document.getElementById('result-label');
+const resultDetail = document.getElementById('result-detail');
+
+let query = '';
+
+function queryTerms() {
+  return query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+function haystacks(item) {
+  if (item.type === 'thread') {
+    return [
+      item.path || '',
+      ...item.comments.map((c) => `${c.author || ''} ${c.snippet || ''}`),
+    ];
+  }
+  return [`${item.author || ''} ${item.snippet || ''}`];
+}
+
+// null = no query, false = no match, else details for rendering.
+function matchQuery(item) {
+  const terms = queryTerms();
+  if (!terms.length) return null;
+  const fields = haystacks(item).map((s) => s.toLowerCase());
+  if (!terms.every((t) => fields.some((f) => f.includes(t)))) return false;
+  const comments = item.type === 'thread' ? item.comments : [item];
+  const hit = comments.find((c) =>
+    terms.some((t) => `${c.author || ''} ${c.snippet || ''}`.toLowerCase().includes(t)),
+  );
+  return { terms, hit, count: comments.filter((c) =>
+    terms.some((t) => `${c.author || ''} ${c.snippet || ''}`.toLowerCase().includes(t)),
+  ).length };
+}
+
+// A window of text around the earliest matching term, with ellipses.
+function snippetAround(text, terms, before = 40, after = 110) {
+  const lower = (text || '').toLowerCase();
+  let at = -1;
+  let term = '';
+  for (const t of terms) {
+    const i = lower.indexOf(t);
+    if (i !== -1 && (at === -1 || i < at)) {
+      at = i;
+      term = t;
+    }
+  }
+  if (at === -1) return null;
+  const start = Math.max(0, at - before);
+  const end = Math.min(text.length, at + term.length + after);
+  return {
+    pre: (start ? '…' : '') + text.slice(start, at),
+    mark: text.slice(at, at + term.length),
+    post: text.slice(at + term.length, end) + (end < text.length ? '…' : ''),
+  };
+}
+
+// Text with every term wrapped in <mark>, as a safe DOM fragment.
+function highlight(text, terms) {
+  const frag = document.createDocumentFragment();
+  if (!terms.length) {
+    frag.append(text || '');
+    return frag;
+  }
+  const lower = (text || '').toLowerCase();
+  let i = 0;
+  while (i < text.length) {
+    let at = -1;
+    let term = '';
+    for (const t of terms) {
+      const j = lower.indexOf(t, i);
+      if (j !== -1 && (at === -1 || j < at)) {
+        at = j;
+        term = t;
+      }
+    }
+    if (at === -1) break;
+    if (at > i) frag.append(text.slice(i, at));
+    const m = document.createElement('mark');
+    m.textContent = text.slice(at, at + term.length);
+    frag.append(m);
+    i = at + term.length;
+  }
+  if (i < text.length) frag.append(text.slice(i));
+  return frag;
+}
+
+function syncSearchChrome() {
+  const active = !!query.trim();
+  searchBox.classList.toggle('active', active);
+  searchClear.hidden = !active;
+  searchHint.hidden = active;
+  resultBar.hidden = !active;
+}
+
+function renderResultBar(scoped, outline) {
+  if (!query.trim()) return;
+  const threads = scoped.filter((i) => i.type === 'thread').length;
+  const others = scoped.length - threads;
+  const bits = [];
+  if (threads) bits.push(`${threads} thread${threads === 1 ? '' : 's'}`);
+  if (others) bits.push(`${others} comment${others === 1 ? '' : 's'}`);
+  resultLabel.textContent = scoped.length ? bits.join(' · ') : 'No matches';
+  resultDetail.textContent = scoped.length
+    ? `matching “${query.trim()}” in this pull request`
+    : 'Try a file name, a person, or a phrase from a comment';
 }
 
 // ---- people filter ---------------------------------------------------------
@@ -332,7 +450,8 @@ function commentBlock(tab, outline, c) {
   if (isBot(c.author)) head.append(el('span', 'bot-tag', 'bot'));
   head.append(el('span', 'cmt-time', relTime(c.time)));
   col.append(head);
-  const body = el('div', 'cmt-body clickable', c.snippet || '');
+  const body = el('div', 'cmt-body clickable');
+  body.append(highlight(c.snippet || '', queryTerms()));
   body.title = 'Go to this comment on the page';
   body.addEventListener('click', () => void gotoComment(tab.id, outline.url, c.id));
   col.append(body);
@@ -349,7 +468,9 @@ function threadCard(tab, outline, item) {
   const dot = el('span', 'status-dot' + (item.resolved ? ' resolved' : ''));
   const fileCol = el('div', 'file-col');
   const { dir, base } = splitPath(item.path);
-  fileCol.append(el('div', 'file-name', base));
+  const nameEl = el('div', 'file-name');
+  nameEl.append(highlight(base, queryTerms()));
+  fileCol.append(nameEl);
   if (dir) fileCol.append(el('div', 'file-path', shortDir(dir)));
   top.append(dot, fileCol);
   const activity = lastActivity(item);
@@ -370,12 +491,23 @@ function threadCard(tab, outline, item) {
   pills.append(el('span', 'reply-count', `${n} ${n === 1 ? 'reply' : 'replies'}`));
   head.append(pills);
 
-  const last = item.comments[item.comments.length - 1];
-  if (last) {
+  const m = matchQuery(item);
+  const shown = (m && m.hit) || item.comments[item.comments.length - 1];
+  if (shown) {
     const preview = el('div', 'head-preview');
     const author = el('b');
-    author.textContent = last.author || '—';
-    preview.append(author, ` ${last.snippet || ''}`);
+    author.textContent = shown.author || '—';
+    preview.append(author, ' ');
+    const terms = m ? m.terms : [];
+    const around = terms.length ? snippetAround(shown.snippet || '', terms) : null;
+    if (around) {
+      preview.append(around.pre);
+      const mk = document.createElement('mark');
+      mk.textContent = around.mark;
+      preview.append(mk, around.post);
+    } else {
+      preview.append(shown.snippet || '');
+    }
     head.append(preview);
   }
 
@@ -416,7 +548,9 @@ function plainCard(tab, outline, item) {
   top.append(el('span', 'status-dot'));
   const col = el('div', 'file-col');
   const nameRow = el('div', 'cmt-head');
-  nameRow.append(el('span', 'cmt-author', item.author || '—'));
+  const authorEl = el('span', 'cmt-author');
+  authorEl.append(highlight(item.author || '—', queryTerms()));
+  nameRow.append(authorEl);
   if (isBot(item.author)) nameRow.append(el('span', 'bot-tag', 'bot'));
   if (item.type === 'review') {
     if (item.state === 'approved') nameRow.append(el('span', 'pill approved', 'approved'));
@@ -429,7 +563,16 @@ function plainCard(tab, outline, item) {
   head.append(top);
   if (item.snippet) {
     const preview = el('div', 'head-preview');
-    preview.append(item.snippet);
+    const terms = queryTerms();
+    const around = terms.length ? snippetAround(item.snippet, terms) : null;
+    if (around) {
+      preview.append(around.pre);
+      const mk = document.createElement('mark');
+      mk.textContent = around.mark;
+      preview.append(mk, around.post);
+    } else {
+      preview.append(item.snippet);
+    }
     head.append(preview);
   }
   // Reuse the faces slot for the avatar, aligned with thread cards.
@@ -489,15 +632,48 @@ function renderOutline(tab, pr, prState, outline, cachedAt) {
     refresh();
   });
   listMeta.hidden = false;
+  searchBar.hidden = false;
+  query = viewState.query || '';
+  searchInput.value = query;
+  syncSearchChrome();
+
+  searchInput.oninput = () => {
+    query = searchInput.value;
+    saveViewState({ query });
+    syncSearchChrome();
+    refresh();
+  };
+  searchInput.onkeydown = (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      if (query) clearSearch();
+      else searchInput.blur();
+    }
+  };
+  searchClear.onclick = clearSearch;
+
+  function clearSearch() {
+    query = '';
+    searchInput.value = '';
+    saveViewState({ query: '' });
+    syncSearchChrome();
+    refresh();
+    searchInput.focus();
+  }
 
   // The people filter applies first; the status chips count what survives it.
   function refresh() {
-    const scoped = outline.items.filter(matchesPeople);
+    const scoped = outline.items
+      .filter(matchesPeople)
+      .filter((i) => matchQuery(i) !== false);
     renderFilterBar(scoped);
     renderItems(scoped);
+    renderResultBar(scoped, outline);
   }
 
-  renderItems = (scoped = outline.items.filter(matchesPeople)) => {
+  renderItems = (scoped = outline.items
+    .filter(matchesPeople)
+    .filter((i) => matchQuery(i) !== false)) => {
     const filter = FILTERS.find((f) => f.key === activeFilter) || FILTERS[0];
     let items = scoped.filter(filter.match);
     if (sortMode === 'recent') items = [...items].sort((a, b) => lastActivity(b) - lastActivity(a));
@@ -535,9 +711,11 @@ function renderOutline(tab, pr, prState, outline, cachedAt) {
     }
     if (!items.length && !outline.indexing) {
       outlineEl.append(
-        el('div', 'empty', selectedPeople.size
-          ? 'No threads here involve the selected people.'
-          : 'Nothing here — every thread in this filter is handled.'),
+        el('div', 'empty', query.trim()
+          ? `Nothing matches “${query.trim()}”.`
+          : selectedPeople.size
+            ? 'No threads here involve the selected people.'
+            : 'Nothing here — every thread in this filter is handled.'),
       );
     }
     selIndex = -1;
@@ -695,6 +873,12 @@ function selectCard(i) {
 
 document.addEventListener('keydown', (e) => {
   if (e.target instanceof Element && e.target.closest('input, textarea')) return;
+  if (e.key === '/') {
+    e.preventDefault();
+    searchInput.focus();
+    searchInput.select();
+    return;
+  }
   const k = e.key.toLowerCase();
   if (k === 'j') selectCard(selIndex + 1);
   else if (k === 'k') selectCard(selIndex - 1);

@@ -535,7 +535,7 @@
     let snippet = ([...el.querySelectorAll('.comment-body')][0]?.textContent || '')
       .trim()
       .replace(/\s+/g, ' ')
-      .slice(0, 400);
+      .slice(0, 1500);
     if (!snippet) {
       // Copilot review comments are React islands: no server-rendered
       // markup, just <link> preloads and a JSON props payload.
@@ -550,7 +550,7 @@
               avatarByAuthor.set(author, c.author.avatarUrl);
             }
             time = c.createdAt || c.publishedAt || time;
-            snippet = (c.body || '').trim().replace(/\s+/g, ' ').slice(0, 400);
+            snippet = (c.body || '').trim().replace(/\s+/g, ' ').slice(0, 1500);
           }
         } catch {
           // Unparseable payload: keep whatever the DOM gave us.
@@ -601,7 +601,7 @@
           author: reviewAuthor,
           avatar: avatarSrc(node, reviewAuthor),
           time: t?.getAttribute('datetime') || '',
-          snippet: (bodyEl?.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 140),
+          snippet: (bodyEl?.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 1500),
         });
       } else {
         let head = (node.firstElementChild?.textContent || '')

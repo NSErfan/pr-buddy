@@ -27,6 +27,12 @@ jumping to is inside that range, its anchor doesn't exist yet, so the page
 jumps around. A content script clicks "Load more…" until the whole
 conversation is visible, then scrolls to the anchor from the link.
 
+**Search.** A search box filters the conversation by file name, path, comment
+text, or author. Every whitespace-separated term must match somewhere, so
+"steven cancel" finds threads where Steven discussed cancellation. Matches are
+highlighted, and a thread's preview switches to the comment that matched.
+Press `/` to focus the box, Escape to clear.
+
 **People filter.** The popup shows an avatar stack of everyone who spoke in
 the PR, most-involved first. Tap faces to see only the threads those people
 took part in (multi-select is a union); the status chips recount against the

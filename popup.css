@@ -527,6 +527,121 @@ header {
   color: var(--fg);
 }
 
+/* ---- search ---- */
+
+#search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+
+#search-box {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border-2);
+  background: var(--card);
+  color: var(--muted-3);
+}
+
+#search-box:focus-within {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+#search-box.active {
+  border-color: color-mix(in oklab, var(--accent) 45%, var(--card));
+  background: color-mix(in oklab, var(--accent) 5%, var(--card));
+}
+
+#search-box svg {
+  flex: none;
+}
+
+#search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--fg);
+}
+
+#search-input::placeholder {
+  color: var(--muted-3);
+}
+
+#search-clear {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--border-3);
+  color: var(--neutral-pill-fg);
+  font-size: 11px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+#search-clear:hover {
+  background: var(--muted-3);
+  color: var(--card);
+}
+
+.kbd {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border-3);
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: 9.5px;
+  color: var(--faint);
+}
+
+#result-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  background: color-mix(in oklab, var(--accent) 6%, var(--card));
+  border-bottom: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--neutral-pill-fg);
+}
+
+#result-label {
+  font-weight: 600;
+  color: var(--accent);
+  flex: none;
+}
+
+#result-detail {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+mark {
+  background: color-mix(in oklab, var(--accent) 22%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
 /* ---- content / cards ---- */
 
 #content {
