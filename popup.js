@@ -42,6 +42,46 @@ const FILTERS = [
 let activeFilter = localStorage.getItem('focus-pr-filter') || 'all';
 let sortMode = localStorage.getItem('focus-pr-sort') || 'timeline';
 
+// ---- per-PR view state -----------------------------------------------------
+// The popup reopens exactly where it was left: expanded cards, scroll
+// position, and keyboard selection survive closing the popup (e.g. after
+// jumping to a comment on the page).
+
+const VIEW_KEY = 'focus-pr-view';
+let viewPrKey = null;
+let viewState = { expanded: [], scroll: 0, sel: '' };
+
+function loadViewState(prKey) {
+  viewPrKey = prKey;
+  try {
+    const all = JSON.parse(localStorage.getItem(VIEW_KEY) || '{}');
+    viewState = { expanded: [], scroll: 0, sel: '', ...(all[prKey] || {}) };
+  } catch {
+    viewState = { expanded: [], scroll: 0, sel: '' };
+  }
+}
+
+function saveViewState(patch) {
+  if (!viewPrKey) return;
+  Object.assign(viewState, patch);
+  try {
+    const all = JSON.parse(localStorage.getItem(VIEW_KEY) || '{}');
+    all[viewPrKey] = { ...viewState, t: Date.now() };
+    const keys = Object.keys(all);
+    if (keys.length > 30) {
+      keys.sort((a, b) => (all[a].t || 0) - (all[b].t || 0));
+      for (const k of keys.slice(0, keys.length - 30)) delete all[k];
+    }
+    localStorage.setItem(VIEW_KEY, JSON.stringify(all));
+  } catch {
+    // Storage unavailable: state just won't persist.
+  }
+}
+
+function itemKey(item) {
+  return item.anchor || item.id || item.path || '';
+}
+
 function send(message) {
   return chrome.runtime.sendMessage(message);
 }
@@ -149,6 +189,7 @@ function isBot(author) {
 
 async function gotoComment(tabId, baseUrl, anchorId) {
   const url = `${baseUrl}#${anchorId}`;
+  saveViewState({ scroll: contentEl.scrollTop });
   try {
     await chrome.tabs.update(tabId, { active: true });
     try {
@@ -164,6 +205,7 @@ async function gotoComment(tabId, baseUrl, anchorId) {
 // ---- outline rendering -----------------------------------------------------
 
 let renderItems = () => {};
+let scrollRestored = false;
 
 async function cachedOutline(key) {
   try {
@@ -259,12 +301,18 @@ function threadCard(tab, outline, item) {
   body.append(inner);
 
   head.addEventListener('click', () => {
-    if (item.comments.length) card.classList.toggle('expanded');
-    else if (item.anchor) void gotoComment(tab.id, outline.url, item.anchor);
+    if (item.comments.length) {
+      card.classList.toggle('expanded');
+      const set = new Set(viewState.expanded);
+      if (card.classList.contains('expanded')) set.add(itemKey(item));
+      else set.delete(itemKey(item));
+      saveViewState({ expanded: [...set] });
+    } else if (item.anchor) void gotoComment(tab.id, outline.url, item.anchor);
   });
 
   card.append(head, body);
   card.dataset.anchor = item.anchor || '';
+  card.dataset.key = itemKey(item);
   return card;
 }
 
@@ -297,6 +345,7 @@ function plainCard(tab, outline, item) {
   head.addEventListener('click', () => void gotoComment(tab.id, outline.url, item.id));
   card.append(head);
   card.dataset.anchor = item.id;
+  card.dataset.key = itemKey(item);
   return card;
 }
 
@@ -362,15 +411,32 @@ function renderOutline(tab, pr, prState, outline, cachedAt) {
     } else if (outline.indexing) {
       outlineEl.append(el('div', 'notice', 'Still indexing this page — reopen in a moment for the full list.'));
     }
+    const expanded = new Set(viewState.expanded);
     for (const item of items) {
-      outlineEl.append(item.type === 'thread' ? threadCard(tab, outline, item) : plainCard(tab, outline, item));
+      const card = item.type === 'thread' ? threadCard(tab, outline, item) : plainCard(tab, outline, item);
+      if (item.type === 'thread' && item.comments.length && expanded.has(itemKey(item))) {
+        card.classList.add('expanded', 'no-anim');
+        requestAnimationFrame(() => card.classList.remove('no-anim'));
+      }
+      outlineEl.append(card);
     }
     if (!items.length && !outline.indexing) {
       outlineEl.append(el('div', 'empty', 'Nothing here — every thread in this filter is handled.'));
     }
     selIndex = -1;
+    if (viewState.sel) {
+      const i = cards().findIndex((c) => c.dataset.key === viewState.sel);
+      if (i >= 0) selectCard(i);
+    }
   };
   renderItems();
+
+  if (!scrollRestored) {
+    scrollRestored = true;
+    requestAnimationFrame(() => {
+      contentEl.scrollTop = viewState.scroll || 0;
+    });
+  }
 
   sortToggle.onclick = () => {
     sortMode = sortMode === 'recent' ? 'timeline' : 'recent';
@@ -493,10 +559,11 @@ function selectCard(i) {
   selIndex = Math.max(0, Math.min(list.length - 1, i));
   list.forEach((c, j) => c.classList.toggle('sel', j === selIndex));
   list[selIndex].scrollIntoView({ block: 'nearest' });
+  saveViewState({ sel: list[selIndex].dataset.key || '' });
 }
 
 document.addEventListener('keydown', (e) => {
-  if (e.target.closest('input, textarea')) return;
+  if (e.target instanceof Element && e.target.closest('input, textarea')) return;
   const k = e.key.toLowerCase();
   if (k === 'j') selectCard(selIndex + 1);
   else if (k === 'k') selectCard(selIndex - 1);
@@ -524,6 +591,7 @@ async function load() {
   if (pr) {
     currentKey = pr.key;
     window.__gfpTab = activeTab;
+    loadViewState(pr.key);
     try {
       const outline = await chrome.tabs.sendMessage(activeTab.id, { type: 'get-outline' });
       if (!outline?.ok) currentKey = null;
@@ -654,5 +722,11 @@ handle.addEventListener('pointerdown', (e) => {
   handle.addEventListener('pointermove', onMove);
   handle.addEventListener('pointerup', onUp);
 });
+
+let scrollSaveTimer = null;
+contentEl.addEventListener('scroll', () => {
+  clearTimeout(scrollSaveTimer);
+  scrollSaveTimer = setTimeout(() => saveViewState({ scroll: contentEl.scrollTop }), 150);
+}, { passive: true });
 
 void load();

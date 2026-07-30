@@ -842,3 +842,8 @@ footer {
 .card.expanded .head-preview {
   display: none;
 }
+
+/* instant (non-animated) expansion when restoring saved view state */
+.card.no-anim .card-body {
+  transition: none;
+}
