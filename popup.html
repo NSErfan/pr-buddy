@@ -36,23 +36,24 @@
     </div>
   </header>
 
-  <div id="filter-bar" hidden></div>
+  <!-- Search lives *on top of* the filter row rather than in a row of its own:
+       the popup is height-capped, so every permanent row is a card we lose. -->
+  <div id="filter-row" hidden>
+    <button id="search-btn" title="Search (/)">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="M15.5 15.5L21 21"></path></svg>
+    </button>
+    <div id="filter-bar"></div>
+    <div id="search-overlay" hidden>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="M15.5 15.5L21 21"></path></svg>
+      <input id="search-input" placeholder="Search files, comments, people…" spellcheck="false" autocomplete="off">
+      <span id="result-label" hidden></span>
+      <button id="search-close" title="Close search">×</button>
+    </div>
+  </div>
   <div id="who-bar" hidden>
     <div id="who-stack" class="who-stack"></div>
     <div id="who-summary" class="who-summary"></div>
     <button id="who-clear" class="who-clear" hidden>Clear</button>
-  </div>
-  <div id="search-bar" hidden>
-    <div id="search-box">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="M15.5 15.5L21 21"></path></svg>
-      <input id="search-input" placeholder="Search files, comments, people…" spellcheck="false" autocomplete="off">
-      <button id="search-clear" title="Clear search" hidden>×</button>
-      <span id="search-hint" class="kbd">/</span>
-    </div>
-  </div>
-  <div id="result-bar" hidden>
-    <span id="result-label"></span>
-    <span id="result-detail"></span>
   </div>
   <div id="list-meta" class="list-meta" hidden>
     <span id="visible-label"></span>

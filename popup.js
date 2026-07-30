@@ -190,16 +190,15 @@ function isBot(author) {
 // name, path, comment text, or an author's name) — so "steven cancel" finds
 // threads where Steven talked about cancellation.
 
-const searchBar = document.getElementById('search-bar');
-const searchBox = document.getElementById('search-box');
+const filterRow = document.getElementById('filter-row');
+const searchBtn = document.getElementById('search-btn');
+const searchOverlay = document.getElementById('search-overlay');
 const searchInput = document.getElementById('search-input');
-const searchClear = document.getElementById('search-clear');
-const searchHint = document.getElementById('search-hint');
-const resultBar = document.getElementById('result-bar');
+const searchClose = document.getElementById('search-close');
 const resultLabel = document.getElementById('result-label');
-const resultDetail = document.getElementById('result-detail');
 
 let query = '';
+let searchOpen = false;
 
 function queryTerms() {
   return query.trim().toLowerCase().split(/\s+/).filter(Boolean);
@@ -283,24 +282,24 @@ function highlight(text, terms) {
 }
 
 function syncSearchChrome() {
-  const active = !!query.trim();
-  searchBox.classList.toggle('active', active);
-  searchClear.hidden = !active;
-  searchHint.hidden = active;
-  resultBar.hidden = !active;
+  searchOverlay.hidden = !searchOpen;
+  // The button keeps the accent while collapsed, so a live query is never
+  // invisible — though closing clears the query, so this is belt-and-braces.
+  searchBtn.classList.toggle('active', !!query.trim());
 }
 
-function renderResultBar(scoped, outline) {
-  if (!query.trim()) return;
+// The count rides inside the search overlay — there is no result row anymore,
+// so it has to be short enough to sit next to the input.
+function renderResultBar(scoped) {
+  const active = !!query.trim();
+  resultLabel.hidden = !active;
+  if (!active) return;
   const threads = scoped.filter((i) => i.type === 'thread').length;
   const others = scoped.length - threads;
   const bits = [];
   if (threads) bits.push(`${threads} thread${threads === 1 ? '' : 's'}`);
   if (others) bits.push(`${others} comment${others === 1 ? '' : 's'}`);
   resultLabel.textContent = scoped.length ? bits.join(' · ') : 'No matches';
-  resultDetail.textContent = scoped.length
-    ? `matching “${query.trim()}” in this pull request`
-    : 'Try a file name, a person, or a phrase from a comment';
 }
 
 // ---- people filter ---------------------------------------------------------
@@ -587,7 +586,7 @@ function plainCard(tab, outline, item) {
 }
 
 function renderFilterBar(items) {
-  filterBar.hidden = false;
+  filterRow.hidden = false;
   filterBar.textContent = '';
   const counts = Object.fromEntries(FILTERS.map((f) => [f.key, items.filter(f.match).length]));
   if (!counts[activeFilter]) activeFilter = 'all';
@@ -633,8 +632,10 @@ function renderOutline(tab, pr, prState, outline, cachedAt, mode) {
     refresh();
   });
   listMeta.hidden = false;
-  searchBar.hidden = false;
   query = viewState.query || '';
+  // A restored query has to reopen the overlay, or the filter would be
+  // silently active with nowhere to see or clear it.
+  searchOpen = !!query;
   searchInput.value = query;
   syncSearchChrome();
 
@@ -647,19 +648,28 @@ function renderOutline(tab, pr, prState, outline, cachedAt, mode) {
   searchInput.onkeydown = (e) => {
     if (e.key === 'Escape') {
       e.preventDefault();
-      if (query) clearSearch();
-      else searchInput.blur();
+      closeSearch();
     }
   };
-  searchClear.onclick = clearSearch;
+  searchBtn.onclick = () => (searchOpen ? closeSearch() : openSearch());
+  searchClose.onclick = closeSearch;
+  window.__gfpOpenSearch = openSearch;
 
-  function clearSearch() {
+  function openSearch() {
+    searchOpen = true;
+    syncSearchChrome();
+    searchInput.focus();
+    searchInput.select();
+  }
+
+  function closeSearch() {
+    searchOpen = false;
+    const had = !!query;
     query = '';
     searchInput.value = '';
     saveViewState({ query: '' });
     syncSearchChrome();
-    refresh();
-    searchInput.focus();
+    if (had) refresh();
   }
 
   // The people filter applies first; the status chips count what survives it.
@@ -669,7 +679,7 @@ function renderOutline(tab, pr, prState, outline, cachedAt, mode) {
       .filter((i) => matchQuery(i) !== false);
     renderFilterBar(scoped);
     renderItems(scoped);
-    renderResultBar(scoped, outline);
+    renderResultBar(scoped);
   }
 
   renderItems = (scoped = outline.items
@@ -913,8 +923,7 @@ document.addEventListener('keydown', (e) => {
   if (e.target instanceof Element && e.target.closest('input, textarea')) return;
   if (e.key === '/') {
     e.preventDefault();
-    searchInput.focus();
-    searchInput.select();
+    window.__gfpOpenSearch?.();
     return;
   }
   const k = e.key.toLowerCase();
