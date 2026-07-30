@@ -377,8 +377,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           await chrome.tabs.update(tab.id, { active: true });
           if (stale) await chrome.tabs.reload(tab.id);
           await markSeen(message.key);
+        } else if (message.url) {
+          // Tab was closed since the popup rendered: open the PR fresh.
+          await chrome.tabs.create({ url: message.url, active: true });
         }
-        sendResponse({ ok: Boolean(tab) });
+        sendResponse({ ok: true });
         break;
       }
       case 'poll-now': {

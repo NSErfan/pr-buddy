@@ -338,12 +338,113 @@
     location.reload();
   }
 
+  // ---- conversation outline (for the popup) -------------------------------
+
+  function commentInfo(el) {
+    const t = el.querySelector('relative-time');
+    return {
+      id: el.id,
+      author: el.querySelector('.author')?.textContent?.trim() || '',
+      avatar: el.querySelector('img.avatar, img.avatar-user')?.src || '',
+      time: t?.getAttribute('datetime') || '',
+      snippet: ([...el.querySelectorAll('.comment-body')][0]?.textContent || '')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .slice(0, 140),
+    };
+  }
+
+  function buildOutline() {
+    if (!isTrackedPage()) return { ok: false };
+    const root = document.querySelector('.js-discussion') || document;
+    const items = [];
+    const seen = new Set();
+    const nodes = root.querySelectorAll(
+      '[id^="issuecomment-"], [id^="pullrequestreview-"], review-thread-collapsible, .js-resolvable-timeline-thread-container',
+    );
+    for (const node of nodes) {
+      if (/^issuecomment-\d+$/.test(node.id)) {
+        if (seen.has(node.id)) continue;
+        seen.add(node.id);
+        items.push({ type: 'comment', ...commentInfo(node) });
+      } else if (/^pullrequestreview-\d+$/.test(node.id)) {
+        // GitHub sometimes renders the same review id twice; keep the first.
+        if (seen.has(node.id)) continue;
+        seen.add(node.id);
+        const head = (node.firstElementChild?.textContent || '').replace(/\s+/g, ' ').slice(0, 200);
+        const state = /approved these changes/i.test(head)
+          ? 'approved'
+          : /requested changes/i.test(head)
+            ? 'changes'
+            : 'reviewed';
+        const bodyEl = [...node.querySelectorAll('.comment-body')].find(
+          (b) => !b.closest('review-thread-collapsible, .js-resolvable-timeline-thread-container'),
+        );
+        const t = node.querySelector('relative-time');
+        items.push({
+          type: 'review',
+          id: node.id,
+          state,
+          author: node.querySelector('.author')?.textContent?.trim() || '',
+          avatar: node.querySelector('img.avatar, img.avatar-user')?.src || '',
+          time: t?.getAttribute('datetime') || '',
+          snippet: (bodyEl?.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 140),
+        });
+      } else {
+        let head = (node.firstElementChild?.textContent || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .replace(/^Comment thread\s*/i, '');
+        const path = head
+          .split(/\s+(Outdated|Show resolved|Hide resolved|Resolved)\b/i)[0]
+          .trim()
+          .slice(0, 160);
+        const comments = [...node.querySelectorAll('[id^="discussion_r"]')]
+          .filter((e) => /^discussion_r\d+$/.test(e.id) && !seen.has(e.id))
+          .map((e) => {
+            seen.add(e.id);
+            return commentInfo(e);
+          });
+        // Content not loaded yet (indexing still running): fall back to the
+        // hidden-comment count so the popup can still show the thread.
+        const hiddenCount = (node.getAttribute('data-hidden-comment-ids') || '')
+          .split(/\D+/)
+          .filter(Boolean).length;
+        if (!comments.length && !hiddenCount) continue;
+        items.push({
+          type: 'thread',
+          path,
+          resolved: node.getAttribute('data-resolved') === 'true',
+          outdated: [...node.querySelectorAll('.Label')].some((l) =>
+            /outdated/i.test(l.textContent || ''),
+          ),
+          comments,
+          count: comments.length || hiddenCount,
+        });
+      }
+    }
+    return {
+      ok: true,
+      indexing: Boolean(inflight),
+      title:
+        document.querySelector('bdi.js-issue-title, .js-issue-title')?.textContent?.trim() ||
+        document.title.replace(/ · .*$/, ''),
+      url: location.origin + location.pathname,
+      items,
+    };
+  }
+
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (msg?.type !== 'goto-anchor') return;
-    // Ack immediately: the background must not wait on a long expansion
-    // (its message channel would die and it would fall back to a reload).
-    sendResponse({ ok: true });
-    void gotoAnchor(msg.url);
+    if (msg?.type === 'goto-anchor') {
+      // Ack immediately: the background must not wait on a long expansion
+      // (its message channel would die and it would fall back to a reload).
+      sendResponse({ ok: true });
+      void gotoAnchor(msg.url);
+      return;
+    }
+    if (msg?.type === 'get-outline') {
+      sendResponse(buildOutline());
+    }
   });
 
   // ---- triggers -----------------------------------------------------------
