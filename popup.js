@@ -605,7 +605,7 @@ function renderFilterBar(items) {
   }
 }
 
-function renderOutline(tab, pr, prState, outline, cachedAt) {
+function renderOutline(tab, pr, prState, outline, cachedAt, mode) {
   prHead.hidden = false;
   currentTitle.textContent = outline.title;
   currentCrumb.textContent = '';
@@ -693,7 +693,11 @@ function renderOutline(tab, pr, prState, outline, cachedAt) {
       : '';
 
     outlineEl.textContent = '';
-    if (cachedAt) {
+    if (mode === 'subpage') {
+      outlineEl.append(
+        el('div', 'notice', `Conversation index from ${relTime(new Date(cachedAt).toISOString())} ago — clicking a comment opens the Conversation tab at that spot.`),
+      );
+    } else if (cachedAt) {
       outlineEl.append(
         el('div', 'notice', `Cached outline from ${relTime(new Date(cachedAt).toISOString())} ago — reopen after indexing for fresh data.`),
       );
@@ -738,6 +742,22 @@ function renderOutline(tab, pr, prState, outline, cachedAt) {
     localStorage.setItem('focus-pr-sort', sortMode);
     renderItems();
   };
+}
+
+function renderIndexPrompt(tab, pr) {
+  prHead.hidden = false;
+  currentTitle.textContent = tab.title?.replace(/ · Pull Request.*$/, '') || 'This pull request';
+  const notice = el('div', 'notice', 'This PR isn’t indexed yet — open its Conversation tab once.');
+  const btn = el('button', '', 'Open Conversation');
+  btn.addEventListener('click', async () => {
+    await chrome.tabs.update(tab.id, {
+      url: `https://github.com/${pr.owner}/${pr.repo}/pull/${pr.number}`,
+    });
+    window.close();
+  });
+  notice.append(btn);
+  outlineEl.textContent = '';
+  outlineEl.append(notice);
 }
 
 function renderReloadNotice(tab) {
@@ -910,7 +930,15 @@ async function load() {
     try {
       const outline = await chrome.tabs.sendMessage(activeTab.id, { type: 'get-outline' });
       if (!outline?.ok) currentKey = null;
-      else {
+      else if (outline.subpage) {
+        // Files changed / commits tab: serve the conversation index from
+        // cache; clicks flip this tab to the conversation at the comment.
+        const cached = await cachedOutline(pr.key);
+        if (cached) {
+          window.__gfpOutlineUrl = cached.outline.url;
+          renderOutline(activeTab, pr, prState, cached.outline, cached.savedAt, 'subpage');
+        } else renderIndexPrompt(activeTab, pr);
+      } else {
         window.__gfpOutlineUrl = outline.url;
         if (outline.indexing && !outline.items.length) {
           const cached = await cachedOutline(pr.key);

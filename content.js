@@ -22,6 +22,13 @@
     return PAGE_RE.test(location.pathname);
   }
 
+  // The indexer only understands the conversation page. Subpages — the
+  // React-based /changes (Files changed), /files, /commits — have none of
+  // the classic DOM and must never overwrite this PR's cached outline.
+  function isConversationPage() {
+    return /^\/[^/]+\/[^/]+\/pull\/\d+\/?$/.test(location.pathname);
+  }
+
   async function autoExpandEnabled() {
     try {
       const { settings } = await chrome.storage.local.get('settings');
@@ -369,7 +376,7 @@
   }
 
   async function runExpansion() {
-    if (!isTrackedPage()) return;
+    if (!isTrackedPage() || !isConversationPage()) return;
     if (!(await autoExpandEnabled())) return;
     const hadWork = loadMoreButtons().length > 0 || deferredThreadContainers().length > 0;
     const restored = await restoreCachedThreads();
@@ -562,6 +569,7 @@
 
   function buildOutline() {
     if (!isTrackedPage()) return { ok: false };
+    if (!isConversationPage()) return { ok: true, subpage: true };
     avatarByAuthor = buildAvatarIndex();
     const root = document.querySelector('.js-discussion') || document;
     const items = [];
