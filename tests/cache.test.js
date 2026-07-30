@@ -63,6 +63,7 @@ class MemStorage {
 }
 
 const at = (t) => () => t;
+const plainv = (v) => JSON.parse(JSON.stringify(v));
 
 // A canonical saved entry for restore tests.
 function entryWith(fragments, savedAt = 1_000_000) {
@@ -284,6 +285,49 @@ describe('saveThreadCache', () => {
     const failGet = new MemStorage();
     failGet.failGet = true;
     assert.equal(await Cache.saveThreadCache(doc, KEY, null, null, new Set(), { storage: failGet, now: at(1) }), true);
+  });
+});
+
+describe('empty saves never destroy good data (clobber regression)', () => {
+  // Pre-0.18.1, visiting the React /changes tab captured nothing and wrote
+  // empty fragments + an empty outline over the PR's good cache.
+  test('a capture with no fragments and an empty outline writes nothing', async () => {
+    const storage = new MemStorage({
+      [KEY]: entryWith({ '/t/1': FRAG('11', '<div id="discussion_r11">good</div>', 100) }, 100),
+      'outlineCache:owner/repo#1': { savedAt: 100, outline: { items: [1] } },
+    });
+    const doc = makeDoc('<div>react app, nothing indexable</div>');
+    const ok = await Cache.saveThreadCache(
+      doc, KEY, 'outlineCache:owner/repo#1', { items: [] }, new Set(), { storage, now: at(999) },
+    );
+    assert.equal(ok, false);
+    assert.equal(storage.data[KEY].fragments['/t/1'].html, '<div id="discussion_r11">good</div>');
+    assert.deepEqual(plainv(storage.data['outlineCache:owner/repo#1'].outline), { items: [1] });
+  });
+
+  test('a non-empty outline with no fragment capture carries previous fragments forward', async () => {
+    const storage = new MemStorage({
+      [KEY]: entryWith({ '/t/1': FRAG('11', '<x/>', 100) }, 100),
+    });
+    const doc = makeDoc('<div id="discussion_rX">no thread containers here</div>');
+    const ok = await Cache.saveThreadCache(
+      doc, KEY, 'outlineCache:owner/repo#1', { items: [1, 2] }, new Set(), { storage, now: at(999) },
+    );
+    assert.equal(ok, true);
+    assert.equal(storage.data[KEY].fragments['/t/1'].html, '<x/>', 'previous fragments preserved');
+    assert.equal(storage.data['outlineCache:owner/repo#1'].outline.items.length, 2);
+  });
+
+  test('an empty outline is not written even when fragments were captured', async () => {
+    const storage = new MemStorage({
+      'outlineCache:owner/repo#1': { savedAt: 100, outline: { items: [1] } },
+    });
+    const doc = makeDoc(loadedThread('/t/1', '11', ['11']));
+    const ok = await Cache.saveThreadCache(
+      doc, KEY, 'outlineCache:owner/repo#1', { items: [] }, new Set(), { storage, now: at(999) },
+    );
+    assert.equal(ok, true, 'fragments still save');
+    assert.deepEqual(plainv(storage.data['outlineCache:owner/repo#1'].outline), { items: [1] });
   });
 });
 

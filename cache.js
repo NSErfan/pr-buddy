@@ -95,9 +95,15 @@
         fetchedAt: restoredUrls.has(url) ? prev[url]?.fetchedAt ?? now() : now(),
       };
     }
+    // An empty capture must never destroy good data: a page with nothing to
+    // offer (wrong tab, half-loaded DOM) keeps the previous fragments, and
+    // an outline with no items is never written over anything.
+    const hasCapture = Object.keys(fragments).length > 0;
+    const hasOutline = Boolean(outlineKey && outline && outline.items && outline.items.length);
+    if (!hasCapture && !hasOutline) return false;
     try {
-      const payload = { [key]: { savedAt: now(), fragments } };
-      if (outlineKey && outline) payload[outlineKey] = { savedAt: now(), outline };
+      const payload = { [key]: { savedAt: now(), fragments: hasCapture ? fragments : prev } };
+      if (hasOutline) payload[outlineKey] = { savedAt: now(), outline };
       await storage.set(payload);
       return true;
     } catch {

@@ -422,7 +422,8 @@ async function cachedOutline(key) {
   try {
     const storageKey = `outlineCache:${key}`;
     const { [storageKey]: entry } = await chrome.storage.local.get(storageKey);
-    if (entry?.outline && GFPCache.isFresh(entry)) return entry;
+    // A clobbered/empty outline (pre-0.18.1 bug wrote these) counts as absent.
+    if (entry?.outline?.items?.length && GFPCache.isFresh(entry)) return entry;
   } catch {
     // Storage unavailable: no cache.
   }
