@@ -10,7 +10,24 @@ const othersList = document.getElementById('others-list');
 const statusEl = document.getElementById('status');
 const resolvedSummary = document.getElementById('resolved-summary');
 const newPill = document.getElementById('new-pill');
-const newPillText = document.getElementById('new-pill-text');
+
+// Rebuild the pill's content wholesale each time: it can never end up as a
+// bare dot with a missing label, and it hides whenever there is no label.
+function setNewPill(updates) {
+  const label = updates === null ? '' : updates > 0 ? `${updates} new` : 'updated';
+  if (!label) {
+    newPill.hidden = true;
+    return;
+  }
+  const dot = document.createElement('span');
+  dot.className = 'new-dot';
+  newPill.replaceChildren(dot, document.createTextNode(label));
+  newPill.title =
+    updates > 0
+      ? `${updates} comments/commits since you last viewed this PR — click to sync`
+      : 'The PR changed since you last viewed it (edit, push, or label) — click to sync';
+  newPill.hidden = false;
+}
 const noCurrent = document.getElementById('no-current');
 const contentEl = document.getElementById('content');
 
@@ -316,15 +333,7 @@ function renderOutline(tab, pr, prState, outline, cachedAt) {
   }
 
   const entry = prState[pr.key];
-  const updates = describeUpdates(entry);
-  newPill.hidden = updates === null;
-  if (updates !== null) {
-    newPillText.textContent = updates > 0 ? `${updates} new` : 'updated';
-    newPill.title =
-      updates > 0
-        ? `${updates} comments/commits since you last viewed this PR — click to sync`
-        : 'The PR changed since you last viewed it — click to sync';
-  }
+  setNewPill(describeUpdates(entry));
 
   renderFilterBar(outline.items);
   listMeta.hidden = false;
