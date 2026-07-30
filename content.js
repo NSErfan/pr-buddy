@@ -494,9 +494,32 @@
 
   // ---- conversation outline (for the popup) -------------------------------
 
-  // Bots (Copilot) use GitHub's React avatar markup instead of the classic
-  // img.avatar, and some bot nodes carry no avatar img at all.
-  function avatarSrc(el) {
+  // Avatars are resolved through one page-wide index keyed by login, because
+  // searching inside a comment node is unreliable in both directions: review
+  // and issue-comment nodes often keep the author's avatar OUTSIDE the element
+  // (so the search finds nothing and the row falls back to initials), and when
+  // they do contain images the first one can belong to a different
+  // participant. GitHub labels the canonical avatar alt="@login" (occasionally
+  // without the @), which is authoritative — and one index also guarantees the
+  // same person always renders with the same face.
+  let avatarByAuthor = new Map();
+
+  const LOGIN_ALT_RE = /^@?([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\[bot\])?)$/;
+
+  function buildAvatarIndex() {
+    const map = new Map();
+    for (const img of document.querySelectorAll('img[alt]')) {
+      const m = (img.getAttribute('alt') || '').match(LOGIN_ALT_RE);
+      if (!m) continue;
+      const src = img.currentSrc || img.src || '';
+      if (!src.includes('githubusercontent.com')) continue;
+      if (!map.has(m[1])) map.set(m[1], src);
+    }
+    return map;
+  }
+
+  function avatarSrc(el, author) {
+    if (author && avatarByAuthor.has(author)) return avatarByAuthor.get(author);
     return (
       el.querySelector(
         'img.avatar-user, img.avatar, img[class*="Avatar-module"], img[src*="avatars.githubusercontent.com"]',
@@ -507,7 +530,7 @@
   function commentInfo(el) {
     const t = el.querySelector('relative-time');
     let author = el.querySelector('.author')?.textContent?.trim() || '';
-    let avatar = avatarSrc(el);
+    let avatar = avatarSrc(el, author);
     let time = t?.getAttribute('datetime') || '';
     let snippet = ([...el.querySelectorAll('.comment-body')][0]?.textContent || '')
       .trim()
@@ -522,7 +545,10 @@
           const c = JSON.parse(script.textContent)?.props?.comment;
           if (c) {
             author = c.author?.login || c.author?.displayName || author || 'Copilot';
-            avatar = c.author?.avatarUrl || avatar;
+            avatar = avatarByAuthor.get(author) || c.author?.avatarUrl || avatar;
+            if (author && c.author?.avatarUrl && !avatarByAuthor.has(author)) {
+              avatarByAuthor.set(author, c.author.avatarUrl);
+            }
             time = c.createdAt || c.publishedAt || time;
             snippet = (c.body || '').trim().replace(/\s+/g, ' ').slice(0, 400);
           }
@@ -536,6 +562,7 @@
 
   function buildOutline() {
     if (!isTrackedPage()) return { ok: false };
+    avatarByAuthor = buildAvatarIndex();
     const root = document.querySelector('.js-discussion') || document;
     const items = [];
     const seen = new Set();
@@ -566,12 +593,13 @@
           (b) => !b.closest('review-thread-collapsible, .js-resolvable-timeline-thread-container'),
         );
         const t = node.querySelector('relative-time');
+        const reviewAuthor = node.querySelector('.author')?.textContent?.trim() || '';
         items.push({
           type: 'review',
           id: node.id,
           state,
-          author: node.querySelector('.author')?.textContent?.trim() || '',
-          avatar: avatarSrc(node),
+          author: reviewAuthor,
+          avatar: avatarSrc(node, reviewAuthor),
           time: t?.getAttribute('datetime') || '',
           snippet: (bodyEl?.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 140),
         });
