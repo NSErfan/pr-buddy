@@ -450,7 +450,9 @@ header {
   max-width: 62%;
   overflow-x: auto;
   scrollbar-width: none;
-  padding: 2px 0;
+  /* overflow-x also clips vertically, so the selection ring needs padding
+     to live in — otherwise it is shaved off top and bottom. */
+  padding: 5px 0;
 }
 
 .who-stack::-webkit-scrollbar {
@@ -458,10 +460,10 @@ header {
 }
 
 .who-face {
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 26px;
   border-radius: 999px;
-  margin-left: -7px;
+  margin-left: -6px;
   flex: none;
   display: flex;
   align-items: center;
@@ -853,6 +855,16 @@ header {
 
 .card.plain .card-head {
   cursor: pointer;
+}
+
+/* An avatar box has no text baseline of its own, so baseline alignment
+   floats it above the name. Comment/review rows centre instead. */
+.card.plain .head-top {
+  align-items: center;
+}
+
+.card.plain .file-col .cmt-head {
+  align-items: center;
 }
 
 /* ---- misc ---- */
