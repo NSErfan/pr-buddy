@@ -225,9 +225,16 @@
   // comment ids hidden inside. Pointing the fragment's src at that URL loads
   // the thread invisibly (it stays visually collapsed).
 
+  // A thread container is loaded once it holds an actual comment element.
+  // (Checking for include-fragment is wrong: loaded content contains nested
+  // fragments of its own — edit forms, menus.)
+  function threadLoaded(c) {
+    return !!c.querySelector('[id^="discussion_r"]');
+  }
+
   function deferredThreadContainers() {
-    return [...document.querySelectorAll('[data-deferred-content-url]')].filter((c) =>
-      c.querySelector('include-fragment'),
+    return [...document.querySelectorAll('[data-deferred-content-url]')].filter(
+      (c) => !threadLoaded(c) && c.querySelector('include-fragment'),
     );
   }
 
@@ -311,6 +318,66 @@
     );
   }
 
+  // ---- thread cache -------------------------------------------------------
+  // Loaded thread fragments are cached per PR so a reload doesn't refetch
+  // them. Validity is structural, not just time-based: a container's
+  // data-hidden-comment-ids (server-rendered fresh on every load) is the
+  // fingerprint — any new reply changes the id list and forces a refetch.
+
+  const CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+
+  function prCacheKey(prefix) {
+    const m = location.pathname.match(/^\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+    return m ? `${prefix}:${m[1]}/${m[2]}#${m[3]}`.toLowerCase() : null;
+  }
+
+  async function restoreCachedThreads() {
+    const key = prCacheKey('threadCache');
+    if (!key) return 0;
+    try {
+      const { [key]: entry } = await chrome.storage.local.get(key);
+      if (!entry?.fragments || Date.now() - entry.savedAt > CACHE_TTL_MS) return 0;
+      let restored = 0;
+      for (const c of document.querySelectorAll('[data-deferred-content-url]')) {
+        if (threadLoaded(c)) continue;
+        const cached = entry.fragments[c.getAttribute('data-deferred-content-url')];
+        if (cached && cached.ids === (c.getAttribute('data-hidden-comment-ids') || '')) {
+          c.innerHTML = cached.html;
+          restored++;
+        }
+      }
+      return restored;
+    } catch {
+      return 0;
+    }
+  }
+
+  async function saveThreadCache() {
+    const key = prCacheKey('threadCache');
+    if (!key) return;
+    const fragments = {};
+    for (const c of document.querySelectorAll('[data-deferred-content-url]')) {
+      if (!threadLoaded(c)) continue;
+      const url = c.getAttribute('data-deferred-content-url');
+      if (url) {
+        fragments[url] = {
+          ids: c.getAttribute('data-hidden-comment-ids') || '',
+          html: c.innerHTML,
+        };
+      }
+    }
+    const outline = buildOutline();
+    outline.indexing = false; // saved snapshots are complete by definition
+    try {
+      await chrome.storage.local.set({
+        [key]: { savedAt: Date.now(), fragments },
+        [prCacheKey('outlineCache')]: { savedAt: Date.now(), outline },
+      });
+    } catch {
+      // Quota or storage failure: caching is best-effort.
+    }
+  }
+
   // Single-flight: concurrent callers share the same expansion pass.
   let inflight = null;
 
@@ -327,6 +394,8 @@
     if (!isTrackedPage()) return;
     if (!(await autoExpandEnabled())) return;
     const hadWork = loadMoreButtons().length > 0 || deferredThreadContainers().length > 0;
+    const restored = await restoreCachedThreads();
+    if (restored) showHud(`Restored ${restored} thread${restored > 1 ? 's' : ''} from cache`);
     let lastRemaining = -1;
     let stalls = 0;
     for (let round = 0; round < MAX_ROUNDS; round++) {
@@ -349,11 +418,15 @@
       await waitForDetach(buttons);
       await sleep(150); // let inserted content (and any new buttons) settle
     }
+    // Timeline chunks may have brought in more thread containers the cache
+    // can serve before we fetch the rest.
+    await restoreCachedThreads();
     await preloadDeferredThreads((done, total) => {
       showHud(`Indexing review threads… ${done}/${total}`);
     });
     if (hadWork) showHud('Indexing threads…');
     await preloadLazyFragments();
+    await saveThreadCache();
     if (hadWork) hideHud(`All set — ${indexedAnchorCount()} comments indexed ✓`);
   }
 

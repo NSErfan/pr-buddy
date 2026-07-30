@@ -335,14 +335,30 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'poll') void pollUpdates();
 });
 
+// Thread/outline caches written by the content script expire after 3 days.
+const CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+
+async function pruneCaches() {
+  const all = await chrome.storage.local.get(null);
+  const now = Date.now();
+  const expired = Object.keys(all).filter(
+    (k) =>
+      (k.startsWith('threadCache:') || k.startsWith('outlineCache:')) &&
+      now - (all[k]?.savedAt || 0) > CACHE_TTL_MS,
+  );
+  if (expired.length) await chrome.storage.local.remove(expired);
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   void schedulePolling();
   void pollUpdates();
+  void pruneCaches();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   void schedulePolling();
   void pollUpdates();
+  void pruneCaches();
 });
 
 // ---------------------------------------------------------------------------

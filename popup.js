@@ -104,12 +104,16 @@ function stateChip(entry) {
 // ---- current PR outline ----------------------------------------------------
 
 async function gotoComment(tabId, baseUrl, anchorId) {
+  const url = `${baseUrl}#${anchorId}`;
   try {
     await chrome.tabs.update(tabId, { active: true });
-    await chrome.tabs.sendMessage(tabId, {
-      type: 'goto-anchor',
-      url: `${baseUrl}#${anchorId}`,
-    });
+    try {
+      await chrome.tabs.sendMessage(tabId, { type: 'goto-anchor', url });
+    } catch {
+      // No content script in that tab (e.g. navigating from a cached
+      // outline): a plain navigation re-indexes and lands on the anchor.
+      await chrome.tabs.update(tabId, { url });
+    }
   } finally {
     window.close();
   }
@@ -259,7 +263,18 @@ function renderFilterBar(items) {
 
 let renderItems = () => {};
 
-function renderOutline(tab, pr, prState, outline) {
+async function cachedOutline(key) {
+  try {
+    const storageKey = `outlineCache:${key}`;
+    const { [storageKey]: entry } = await chrome.storage.local.get(storageKey);
+    if (entry?.outline && Date.now() - entry.savedAt < 3 * 24 * 60 * 60 * 1000) return entry;
+  } catch {
+    // Storage unavailable: no cache.
+  }
+  return null;
+}
+
+function renderOutline(tab, pr, prState, outline, cachedAt) {
   currentSection.hidden = false;
   currentTitle.textContent = outline.title;
   currentMeta.textContent = '';
@@ -279,7 +294,11 @@ function renderOutline(tab, pr, prState, outline) {
       items = [...items].sort((a, b) => lastActivity(b) - lastActivity(a));
     }
     outlineEl.textContent = '';
-    if (outline.indexing) {
+    if (cachedAt) {
+      outlineEl.append(
+        el('div', 'notice', `Cached outline from ${relTime(new Date(cachedAt).toISOString())} ago — reopen after indexing for fresh data.`),
+      );
+    } else if (outline.indexing) {
       outlineEl.append(
         el('div', 'notice', 'Still indexing this page — reopen in a moment for the full list.'),
       );
@@ -407,10 +426,17 @@ async function load() {
     currentKey = pr.key;
     try {
       const outline = await chrome.tabs.sendMessage(activeTab.id, { type: 'get-outline' });
-      if (outline?.ok) renderOutline(activeTab, pr, prState, outline);
-      else currentKey = null;
+      if (!outline?.ok) currentKey = null;
+      else if (outline.indexing && !outline.items.length) {
+        // Nothing extracted yet: a cached outline beats a "still indexing" shrug.
+        const cached = await cachedOutline(pr.key);
+        if (cached) renderOutline(activeTab, pr, prState, cached.outline, cached.savedAt);
+        else renderOutline(activeTab, pr, prState, outline);
+      } else renderOutline(activeTab, pr, prState, outline);
     } catch {
-      renderReloadNotice(activeTab);
+      const cached = await cachedOutline(pr.key);
+      if (cached) renderOutline(activeTab, pr, prState, cached.outline, cached.savedAt);
+      else renderReloadNotice(activeTab);
     }
   }
 
