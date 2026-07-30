@@ -157,6 +157,7 @@ chrome.tabs.onCreated.addListener((tab) => {
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   freshTabs.delete(tabId);
+  dedupeExemptTabs.delete(tabId);
 });
 
 chrome.webNavigation.onCommitted.addListener((details) => {
@@ -183,6 +184,12 @@ function consumeIntentionalDuplicate(key) {
   return expiry > Date.now();
 }
 
+// Tab creation fires BOTH tabs.onCreated and webNavigation.onCommitted, and
+// each runs maybeRedirect. The intentional mark is single-use, so the tab it
+// blessed must stay exempt for its remaining events — otherwise the second
+// event deduped and closed it (hidden index tabs, cmd-click new tabs).
+const dedupeExemptTabs = new Set();
+
 async function maybeRedirect(newTabId, url) {
   const settings = await getSettings();
   if (!settings.dedupe) return;
@@ -190,7 +197,11 @@ async function maybeRedirect(newTabId, url) {
   const pr = parseTrackedUrl(url);
   if (!pr) return;
 
-  if (consumeIntentionalDuplicate(pr.key)) return;
+  if (dedupeExemptTabs.has(newTabId)) return;
+  if (consumeIntentionalDuplicate(pr.key)) {
+    dedupeExemptTabs.add(newTabId);
+    return;
+  }
 
   const existing = await findPrTab(pr.key, newTabId, url);
   if (!existing) return;

@@ -65,7 +65,7 @@ function loadBackground({ tabs = [], storage = {} } = {}) {
     },
     action: { setBadgeText: async () => {}, setBadgeBackgroundColor: async () => {} },
     alarms: { create() {}, clear: async () => {}, onAlarm: { addListener() {} } },
-    webNavigation: { onCommitted: { addListener() {} } },
+    webNavigation: { onCommitted: { addListener: (fn) => (calls.onNavCommitted = fn) } },
     scripting: { executeScript: async () => {} },
     runtime: {
       onMessage: { addListener: (fn) => (calls.onMessage = fn) },
@@ -95,6 +95,15 @@ function sendFocus(bg, message) {
   return new Promise((resolve) => {
     bg.calls.onMessage(message, {}, resolve);
   });
+}
+
+// Chrome fires BOTH tabs.onCreated and webNavigation.onCommitted for a new
+// tab; any dedupe test must fire both or it misses double-processing bugs.
+async function simulateTabBirth(bg, tab) {
+  bg.calls.onTabCreated({ id: tab.id, pendingUrl: tab.url, windowId: tab.windowId ?? 1 });
+  await new Promise((r) => setTimeout(r, 5));
+  bg.calls.onNavCommitted({ tabId: tab.id, frameId: 0, url: tab.url });
+  await new Promise((r) => setTimeout(r, 20));
 }
 
 const PR_A = 'https://github.com/acme/app/pull/1';
@@ -142,16 +151,14 @@ describe('deliberate duplicates survive dedupe', () => {
     const bg = loadBackground({ tabs: [{ id: 2, url: PR_B, windowId: 11 }] });
     await sendFocus(bg, { type: 'focus-pr', key: 'acme/app#2', url: PR_B, newTab: true });
     const created = bg.tabs.find((t) => t.id >= 1000);
-    bg.calls.onTabCreated({ id: created.id, url: PR_B, windowId: 1 });
-    await tick();
-    assert.deepEqual(plain(bg.calls.removed), [], 'the intentional duplicate must survive');
+    await simulateTabBirth(bg, { id: created.id, url: PR_B });
+    assert.deepEqual(plain(bg.calls.removed), [], 'the intentional duplicate must survive BOTH events');
   });
 
   test('an ordinary duplicate (e.g. a Slack link) is still deduped', async () => {
     const bg = loadBackground({ tabs: [{ id: 2, url: PR_B, windowId: 11 }] });
     const extra = await bg.sandbox.chrome.tabs.create({ url: PR_B, active: true });
-    bg.calls.onTabCreated({ id: extra.id, url: PR_B, windowId: 1 });
-    await tick();
+    await simulateTabBirth(bg, { id: extra.id, url: PR_B });
     assert.deepEqual(plain(bg.calls.removed), [extra.id], 'dedupe must still close it');
   });
 
@@ -159,11 +166,9 @@ describe('deliberate duplicates survive dedupe', () => {
     const bg = loadBackground({ tabs: [{ id: 2, url: PR_B, windowId: 11 }] });
     await sendFocus(bg, { type: 'focus-pr', key: 'acme/app#2', url: PR_B, newTab: true });
     const first = bg.tabs.find((t) => t.id >= 1000);
-    bg.calls.onTabCreated({ id: first.id, url: PR_B, windowId: 1 });
-    await tick();
+    await simulateTabBirth(bg, { id: first.id, url: PR_B });
     const second = await bg.sandbox.chrome.tabs.create({ url: PR_B, active: true });
-    bg.calls.onTabCreated({ id: second.id, url: PR_B, windowId: 1 });
-    await tick();
+    await simulateTabBirth(bg, { id: second.id, url: PR_B });
     assert.deepEqual(plain(bg.calls.removed), [second.id]);
   });
 });
@@ -194,10 +199,11 @@ describe('index-pr (background indexing for the Files tab)', () => {
     });
     await new Promise((r) => setTimeout(r, 5));
     const temp = bg.tabs.find((t) => t.id >= 1000);
-    bg.calls.onTabCreated({ id: temp.id, url: PR_B, windowId: 1 });
+    await simulateTabBirth(bg, { id: temp.id, url: PR_B });
     await done;
     // removed exactly once — by index-pr's cleanup, not by the deduper
     assert.equal(bg.calls.removed.length, 1);
+    assert.ok(bg.tabs.every((t) => t.id !== temp.id), 'cleanup removed the temp tab');
   });
 
   test('reports failure when indexing never completes', async () => {
