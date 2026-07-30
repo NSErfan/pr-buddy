@@ -101,11 +101,31 @@ async function gotoComment(tabId, baseUrl, anchorId) {
   }
 }
 
+// Deterministic letter-on-circle fallback so a missing or unloadable avatar
+// (Copilot and other bots) never renders as a broken image.
+function initialAvatar(name) {
+  const n = (name || '?').replace(/\[bot\]$/i, '').trim() || '?';
+  const letter = n[0].toUpperCase();
+  let h = 0;
+  for (const ch of n) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48">` +
+    `<circle cx="24" cy="24" r="24" fill="hsl(${h},42%,52%)"/>` +
+    `<text x="24" y="31" font-family="-apple-system,sans-serif" font-size="22" font-weight="600" fill="#fff" text-anchor="middle">${letter}</text></svg>`;
+  return 'data:image/svg+xml,' + encodeURIComponent(svg);
+}
+
+function avatarImg(cls, author, src) {
+  const img = el('img', cls);
+  img.alt = '';
+  img.src = src || initialAvatar(author);
+  if (src) img.addEventListener('error', () => { img.src = initialAvatar(author); }, { once: true });
+  return img;
+}
+
 function commentRow(tab, outline, c) {
   const row = el('button', 'row');
-  const avatar = el('img', 'avatar');
-  avatar.src = c.avatar || '';
-  avatar.alt = '';
+  const avatar = avatarImg('avatar', c.author, c.avatar);
   const col = el('div', 'col');
   const who = el('div', 'who');
   who.append(el('span', 'author', c.author || '—'));
@@ -157,9 +177,7 @@ function threadGroup(tab, outline, item) {
   const first = item.comments[0];
   if (first) {
     const line2 = el('div', 'line2');
-    const mini = el('img', 'mini-avatar');
-    mini.src = first.avatar || '';
-    mini.alt = '';
+    const mini = avatarImg('mini-avatar', first.author, first.avatar);
     const preview = el('span', 'preview');
     const author = el('b');
     author.textContent = first.author || '—';
@@ -266,7 +284,31 @@ function renderReloadNotice(tab) {
   outlineEl.append(notice);
 }
 
-// ---- other PR tabs ---------------------------------------------------------
+// ---- PR-list dropdown ------------------------------------------------------
+
+const prMenuBtn = document.getElementById('pr-menu-btn');
+const prDropdown = document.getElementById('pr-dropdown');
+const prCount = document.getElementById('pr-count');
+const noCurrent = document.getElementById('no-current');
+
+function setDropdownOpen(open) {
+  prDropdown.hidden = !open;
+  prMenuBtn.classList.toggle('open', open);
+  // The popup window sizes to the document; an absolutely-positioned
+  // dropdown doesn't contribute height, so reserve room while it's open.
+  document.body.style.minHeight = open ? '440px' : '';
+}
+
+prMenuBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  setDropdownOpen(prDropdown.hidden);
+});
+
+document.addEventListener('click', (e) => {
+  if (!prDropdown.hidden && !e.target.closest('#pr-dropdown, #pr-menu-btn')) {
+    setDropdownOpen(false);
+  }
+});
 
 function renderOthers(prState, openTabs, currentKey) {
   const byKey = new Map();
@@ -275,6 +317,8 @@ function renderOthers(prState, openTabs, currentKey) {
   }
   othersHeading.textContent = currentKey ? 'Other open pull requests' : 'Open pull requests';
   othersList.textContent = '';
+  prCount.hidden = !byKey.size;
+  prCount.textContent = String(byKey.size);
 
   if (!byKey.size) {
     othersList.append(el('p', 'empty', currentKey ? 'No other PR tabs open.' : 'No pull request tabs open.'));
@@ -341,6 +385,12 @@ async function load() {
   }
 
   renderOthers(prState, openTabs, currentKey);
+
+  if (!currentKey && currentSection.hidden) {
+    noCurrent.hidden = false;
+    noCurrent.textContent = 'This tab isn’t a pull request — pick one from the list.';
+    setDropdownOpen(true);
+  }
 }
 
 document.getElementById('refresh').addEventListener('click', async (e) => {

@@ -443,12 +443,22 @@
 
   // ---- conversation outline (for the popup) -------------------------------
 
+  // Bots (Copilot) use GitHub's React avatar markup instead of the classic
+  // img.avatar, and some bot nodes carry no avatar img at all.
+  function avatarSrc(el) {
+    return (
+      el.querySelector(
+        'img.avatar-user, img.avatar, img[class*="Avatar-module"], img[src*="avatars.githubusercontent.com"]',
+      )?.src || ''
+    );
+  }
+
   function commentInfo(el) {
     const t = el.querySelector('relative-time');
     return {
       id: el.id,
       author: el.querySelector('.author')?.textContent?.trim() || '',
-      avatar: el.querySelector('img.avatar, img.avatar-user')?.src || '',
+      avatar: avatarSrc(el),
       time: t?.getAttribute('datetime') || '',
       snippet: ([...el.querySelectorAll('.comment-body')][0]?.textContent || '')
         .trim()
@@ -494,7 +504,7 @@
           id: node.id,
           state,
           author: node.querySelector('.author')?.textContent?.trim() || '',
-          avatar: node.querySelector('img.avatar, img.avatar-user')?.src || '',
+          avatar: avatarSrc(node),
           time: t?.getAttribute('datetime') || '',
           snippet: (bodyEl?.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 140),
         });
