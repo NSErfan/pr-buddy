@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>GitHub Focus PR — Settings</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+      color: #1f2328;
+      background: #ffffff;
+      max-width: 560px;
+      margin: 0 auto;
+      padding: 32px 24px;
+    }
+    h1 { font-size: 18px; margin-bottom: 24px; }
+    .field { margin-bottom: 20px; }
+    label { display: block; font-weight: 600; margin-bottom: 6px; }
+    .hint { color: #59636e; font-size: 12px; margin-top: 6px; line-height: 1.5; }
+    input[type="text"],
+    input[type="password"],
+    input[type="number"] {
+      width: 100%;
+      padding: 6px 10px;
+      border: 1px solid #d1d9e0;
+      border-radius: 6px;
+      font: inherit;
+      background: inherit;
+      color: inherit;
+    }
+    input[type="number"] { width: 90px; }
+    .checkbox { display: flex; align-items: baseline; gap: 8px; }
+    .checkbox label { font-weight: 600; margin: 0; }
+    button {
+      padding: 6px 16px;
+      border: 1px solid rgba(31, 35, 40, 0.15);
+      border-radius: 6px;
+      background: #1f883d;
+      color: #ffffff;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    #status { margin-left: 12px; color: #1a7f37; }
+    a { color: #0969da; }
+    @media (prefers-color-scheme: dark) {
+      body { color: #f0f6fc; background: #0d1117; }
+      .hint { color: #9198a1; }
+      input[type="text"], input[type="password"], input[type="number"] { border-color: #3d444d; }
+      #status { color: #3fb950; }
+      a { color: #4493f8; }
+    }
+  </style>
+</head>
+<body>
+  <h1>GitHub Focus PR — Settings</h1>
+
+  <div class="field checkbox">
+    <input type="checkbox" id="dedupe">
+    <div>
+      <label for="dedupe">Reuse existing PR tabs</label>
+      <p class="hint">When a link opens a new tab for a PR you already have open, close the new tab and focus the existing one instead. Cmd/Ctrl-clicking links inside the PR's own tab still opens duplicates on purpose.</p>
+    </div>
+  </div>
+
+  <div class="field checkbox">
+    <input type="checkbox" id="autoExpand">
+    <div>
+      <label for="autoExpand">Auto-expand hidden timeline items</label>
+      <p class="hint">On PR pages, automatically click "Load more…" until the whole conversation is visible, then scroll to the comment the link pointed at. Prevents the jumping around caused by GitHub collapsing long timelines after a reload.</p>
+    </div>
+  </div>
+
+  <div class="field">
+    <label for="pollMinutes">Check for updates every (minutes)</label>
+    <input type="number" id="pollMinutes" min="1" max="60">
+    <p class="hint">How often to ask the GitHub API whether your open PRs have new comments, review comments, or commits.</p>
+  </div>
+
+  <div class="field">
+    <label for="token">GitHub personal access token (optional)</label>
+    <input type="password" id="token" placeholder="github_pat_… or ghp_…" autocomplete="off">
+    <p class="hint">
+      Needed for private repositories and for a higher API rate limit (5,000/hr vs 60/hr).
+      Create a fine-grained token with read-only <em>Pull requests</em> permission at
+      <a href="https://github.com/settings/tokens" target="_blank">github.com/settings/tokens</a>.
+      Stored only in this browser's extension storage.
+    </p>
+  </div>
+
+  <button id="save">Save</button><span id="status"></span>
+
+  <script src="options.js"></script>
+</body>
+</html>

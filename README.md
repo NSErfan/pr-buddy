@@ -1,0 +1,63 @@
+# GitHub Focus PR
+
+A Chrome extension that keeps each GitHub pull request in **one tab**.
+
+## The problem
+
+While reviewing a PR, replies arrive as notifications in Slack, email, etc.
+Clicking each one opens *another* tab of the same PR — one per comment thread —
+until you have a dozen near-identical tabs and no idea which one is current.
+
+## What it does
+
+**Tab dedupe.** When a link (from Slack or anywhere else) opens a new tab for a
+PR you already have open, the extension closes the new tab, focuses your
+existing tab, navigates it to the exact anchor from the link
+(`#discussion_r…`, `#issuecomment-…`), and reloads it so you land on the
+*current* state of the page — not a stale snapshot.
+
+Deliberate duplicates are respected: Cmd/Ctrl-clicking a link from within the
+PR's own tab (e.g. opening the Files view side by side) is left alone.
+
+**Auto-expand hidden items.** After a reload, GitHub collapses long PR
+timelines into "N hidden items / Load more…" — and if the comment you're
+jumping to is inside that range, its anchor doesn't exist yet, so the page
+jumps around. A content script clicks "Load more…" until the whole
+conversation is visible, then scrolls to the anchor from the link.
+
+**Update tracking.** Every few minutes the extension asks the GitHub API about
+each PR you have a tab open for. If comments, review comments, or commits
+arrived since you last looked at that tab, the toolbar badge shows how many
+PRs have news, and the popup lists each PR with what changed
+(“+2 comments, +1 commit”). Clicking an entry focuses the tab and reloads it.
+
+Looking at a PR tab (or clicking it in the popup) marks it as seen.
+
+## Install
+
+1. Open `chrome://extensions`
+2. Enable **Developer mode** (top right)
+3. Click **Load unpacked** and select this folder
+
+## Settings
+
+Open the extension's options page (popup → Settings):
+
+- **Reuse existing PR tabs** — toggle the dedupe behavior.
+- **Auto-expand hidden timeline items** — toggle the "Load more…" auto-clicking.
+- **Poll interval** — how often to check the API (default 5 min).
+- **Personal access token** — optional, but required for private repositories
+  and a higher API rate limit (5,000/hr instead of 60/hr). A fine-grained token
+  with read-only *Pull requests* permission is enough. Stored only in local
+  extension storage.
+
+## Limitations
+
+- Without a token, only public repos can be checked, at 60 requests/hour
+  (one request per open PR per poll).
+- Update detection uses the PR's aggregate counts (`comments`,
+  `review_comments`, `commits`) plus `updated_at`, so it can tell you *that*
+  something changed and roughly what kind — not which specific thread.
+- Dedupe applies to newly created tabs (which is how external apps open
+  links). Typing the same PR URL into an existing tab's address bar is not
+  intercepted.
