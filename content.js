@@ -81,10 +81,16 @@
 
   // ---- anchor handling ----------------------------------------------------
 
-  function hashTarget() {
-    if (!location.hash) return null;
+  // GitHub's timeline pagination rewrites history state and can WIPE the URL
+  // fragment mid-expansion. The hash being navigated to is therefore carried
+  // explicitly through the whole flow and never read back from location.hash
+  // once a goto starts.
+  let pendingHash = location.hash || '';
+
+  function targetForHash(hash) {
+    if (!hash) return null;
     try {
-      const raw = decodeURIComponent(location.hash.slice(1));
+      const raw = decodeURIComponent(hash.slice(1));
       const direct = document.getElementById(raw);
       if (direct) return direct;
       // Review-comment anchors vary by page: #discussion_r123 (conversation)
@@ -99,6 +105,10 @@
     } catch {
       return null;
     }
+  }
+
+  function hashTarget() {
+    return targetForHash(location.hash || pendingHash);
   }
 
   // "discussion_r3680857039" / "r3680857039" -> "3680857039" (else null)
@@ -118,32 +128,53 @@
     }
   }
 
+  function isVisible(el) {
+    return el.offsetParent !== null || el.getBoundingClientRect().height > 0;
+  }
+
+  // The element (or, if it stays invisible despite revealing, its nearest
+  // visible ancestor — e.g. the thread container) is scrolled to the top.
+  // Never apply the header offset to an invisible element: its rect is all
+  // zeros and the adjustment would just drag the page toward the top.
   function scrollNow(el) {
     revealAncestors(el);
-    el.scrollIntoView({ block: 'start' });
-    const top = el.getBoundingClientRect().top;
+    let target = el;
+    if (!isVisible(target)) {
+      for (let p = el.parentElement; p; p = p.parentElement) {
+        if (isVisible(p)) {
+          target = p;
+          break;
+        }
+      }
+    }
+    target.scrollIntoView({ block: 'start' });
+    if (!isVisible(target)) return;
+    const top = target.getBoundingClientRect().top;
     if (top < HEADER_CLEARANCE_PX) window.scrollBy(0, top - HEADER_CLEARANCE_PX);
   }
 
   // Content above the target keeps loading for a while after we scroll,
   // shifting the layout. Re-anchor a few times unless the user took over.
-  async function stabilizeAnchor() {
+  async function stabilizeAnchor(hash) {
     for (const delay of [400, 1200, 2500]) {
       await sleep(delay);
       if (userScrolled) return;
-      const el = hashTarget();
+      const el = targetForHash(hash);
       if (!el) return;
       const top = el.getBoundingClientRect().top;
       if (Math.abs(top - HEADER_CLEARANCE_PX) > 8) scrollNow(el);
     }
   }
 
-  function scrollToHash() {
-    const el = hashTarget();
+  function scrollToHash(hash = location.hash || pendingHash) {
+    const el = targetForHash(hash);
     if (!el) return false;
+    // Restore the fragment if pagination wiped it — this also drives
+    // GitHub's :target highlight on the comment.
+    if (location.hash !== hash) location.hash = hash;
     userScrolled = false;
     scrollNow(el);
-    void stabilizeAnchor();
+    void stabilizeAnchor(hash);
     return true;
   }
 
@@ -258,15 +289,26 @@
       await sleep(250);
     }
     // Stragglers (markup that only loads on open): briefly open the
-    // containing <details>, then restore its state.
-    for (const f of frags.filter((f) => f.isConnected)) {
-      const details = f.closest('details');
-      if (!details || details.open) continue;
-      details.open = true;
-      const d2 = Date.now() + 3000;
-      while (Date.now() < d2 && f.isConnected) await sleep(150);
-      details.open = false;
-    }
+    // containing <details>, then restore its state. Only thread content is
+    // worth this treatment, in parallel under one shared time budget —
+    // a serial pass over a big PR's leftovers can burn minutes.
+    const stragglers = frags.filter(
+      (f) =>
+        f.isConnected &&
+        f.closest(
+          '[data-deferred-content-url], review-thread-collapsible, .js-resolvable-timeline-thread-container',
+        ),
+    );
+    const budget = Date.now() + 8000;
+    await Promise.all(
+      stragglers.map(async (f) => {
+        const details = f.closest('details');
+        if (!details || details.open) return;
+        details.open = true;
+        while (Date.now() < budget && f.isConnected) await sleep(200);
+        details.open = false;
+      }),
+    );
   }
 
   // Single-flight: concurrent callers share the same expansion pass.
@@ -285,11 +327,24 @@
     if (!isTrackedPage()) return;
     if (!(await autoExpandEnabled())) return;
     const hadWork = loadMoreButtons().length > 0 || deferredThreadContainers().length > 0;
+    let lastRemaining = -1;
+    let stalls = 0;
     for (let round = 0; round < MAX_ROUNDS; round++) {
       const buttons = loadMoreButtons();
       if (!buttons.length) break;
       const remaining = hiddenItemCount();
-      showHud(remaining ? `Loading hidden comments… ${remaining} left` : 'Loading hidden comments…');
+      // No progress since the last round usually means GitHub rate-limited
+      // the pagination endpoint; back off instead of hammering it.
+      if (remaining === lastRemaining) {
+        stalls++;
+        if (stalls > 3) break;
+        showHud('GitHub is throttling — retrying…');
+        await sleep(3000 * stalls);
+      } else {
+        stalls = 0;
+        showHud(remaining ? `Loading hidden comments… ${remaining} left` : 'Loading hidden comments…');
+      }
+      lastRemaining = remaining;
       for (const b of buttons) b.click();
       await waitForDetach(buttons);
       await sleep(150); // let inserted content (and any new buttons) settle
@@ -306,7 +361,35 @@
 
   // Full flow for an incoming link: locate, expand if needed, scroll.
   // Reload is the last resort, for comments genuinely newer than the page.
+  // Any unexpected error must surface in the HUD — a silent stall looks
+  // like "nothing happened" to the user.
   async function gotoAnchor(url) {
+    try {
+      await gotoAnchorInner(url);
+    } catch (err) {
+      console.error('[gh-focus-pr] goto-anchor failed:', err);
+      showHud('Focus PR error — see console');
+      hideHud(undefined, 4000);
+    }
+  }
+
+  // After landing while indexing is still running, content keeps loading
+  // above the target and shifts it, and GitHub's pagination may wipe the
+  // fragment again. Hold the anchor in place until indexing settles —
+  // stopping immediately if the user scrolls — then restore the fragment.
+  async function holdAnchor(hash) {
+    while (inflight) {
+      await sleep(700);
+      if (userScrolled) return;
+      const el = targetForHash(hash);
+      if (!el) return;
+      const top = el.getBoundingClientRect().top;
+      if (Math.abs(top - HEADER_CLEARANCE_PX) > 8) scrollNow(el);
+    }
+    if (!userScrolled && location.hash !== hash) location.hash = hash;
+  }
+
+  async function gotoAnchorInner(url) {
     let hash = '';
     try {
       hash = new URL(url).hash;
@@ -314,28 +397,48 @@
       return;
     }
     if (!hash) return; // bare PR link: staying where we are is fine
+    pendingHash = hash;
     if (location.hash !== hash) location.hash = hash;
-    if (scrollToHash()) return;
+    if (scrollToHash(hash)) {
+      void holdAnchor(hash);
+      return;
+    }
     showHud('Locating comment…');
     // Fast path: the comment may sit in a single collapsed review thread we
     // can load directly (via data-hidden-comment-ids), skipping full indexing.
-    if ((await loadThreadContaining(hash)) && scrollToHash()) {
+    if ((await loadThreadContaining(hash)) && scrollToHash(hash)) {
       hideHud('Found ✓', 1200);
+      void holdAnchor(hash);
       return;
     }
-    await expandAll();
-    if (scrollToHash()) {
+    // Index the page, but land the moment the target materializes — don't
+    // make the user wait for the rest of the indexing to finish.
+    const expansion = expandAll();
+    let expansionDone = false;
+    expansion.catch(() => {}).finally(() => {
+      expansionDone = true;
+    });
+    while (!expansionDone && !targetForHash(hash)) await sleep(300);
+    if (scrollToHash(hash)) {
+      hideHud('Found ✓', 1200);
+      void holdAnchor(hash);
+      return;
+    }
+    await expansion;
+    if (scrollToHash(hash)) {
       hideHud('Found ✓', 1200);
       return;
     }
     // The thread may have arrived with the newly expanded timeline items.
-    if ((await loadThreadContaining(hash)) && scrollToHash()) {
+    if ((await loadThreadContaining(hash)) && scrollToHash(hash)) {
       hideHud('Found ✓', 1200);
       return;
     }
     // Not in the fully-indexed page: the comment is newer than our copy.
+    // Navigate to the FULL url (not location.reload() — pagination may have
+    // wiped the fragment, and reloading a hashless URL lands nowhere).
     showHud('New comment — refreshing…');
-    location.reload();
+    location.replace(url);
   }
 
   // ---- conversation outline (for the popup) -------------------------------
@@ -463,7 +566,11 @@
 
   // Same-page anchor jumps (e.g. the user clicks a timeline link to a
   // still-hidden comment): expand until the target exists, then scroll.
+  // When the target exists but is inside a collapsed thread, the browser's
+  // native jump silently fails — reveal and scroll it ourselves.
   window.addEventListener('hashchange', () => {
-    if (!hashTarget()) void expandAndAnchor();
+    if (location.hash) pendingHash = location.hash;
+    if (hashTarget()) scrollToHash();
+    else void expandAndAnchor();
   });
 })();
