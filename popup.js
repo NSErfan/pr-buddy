@@ -21,6 +21,20 @@ const FILTERS = [
 ];
 
 let activeFilter = localStorage.getItem('focus-pr-filter') || 'all';
+let sortMode = localStorage.getItem('focus-pr-sort') || 'timeline';
+
+// Latest activity of an item: a thread's newest comment, else its own time.
+function lastActivity(item) {
+  if (item.type === 'thread') {
+    let max = 0;
+    for (const c of item.comments) {
+      const t = Date.parse(c.time || '') || 0;
+      if (t > max) max = t;
+    }
+    return max;
+  }
+  return Date.parse(item.time || '') || 0;
+}
 
 function send(message) {
   return chrome.runtime.sendMessage(message);
@@ -165,6 +179,8 @@ function threadGroup(tab, outline, item) {
   const { base } = splitPath(item.path || 'review thread');
   file.append(el('span', 'basename', base));
   line1.append(file);
+  const activity = lastActivity(item);
+  if (activity) line1.append(el('span', 'when', relTime(new Date(activity).toISOString())));
   line1.append(chip('count', String(item.count)));
   if (item.outdated) line1.append(chip('outdated', 'outdated'));
   line1.append(item.resolved ? chip('resolved', 'resolved') : chip('open-thread', 'open'));
@@ -228,6 +244,17 @@ function renderFilterBar(items) {
     });
     filterBar.append(btn);
   }
+
+  const sort = el('button', 'filter-chip sort-toggle');
+  sort.title = 'Toggle sort order';
+  sort.textContent = sortMode === 'recent' ? '↓ Recent' : '≡ Timeline';
+  sort.addEventListener('click', () => {
+    sortMode = sortMode === 'recent' ? 'timeline' : 'recent';
+    localStorage.setItem('focus-pr-sort', sortMode);
+    renderFilterBar(items);
+    renderItems();
+  });
+  filterBar.append(sort);
 }
 
 let renderItems = () => {};
@@ -247,7 +274,10 @@ function renderOutline(tab, pr, prState, outline) {
 
   renderItems = () => {
     const filter = FILTERS.find((f) => f.key === activeFilter) || FILTERS[0];
-    const items = outline.items.filter(filter.match);
+    let items = outline.items.filter(filter.match);
+    if (sortMode === 'recent') {
+      items = [...items].sort((a, b) => lastActivity(b) - lastActivity(a));
+    }
     outlineEl.textContent = '';
     if (outline.indexing) {
       outlineEl.append(
@@ -404,6 +434,48 @@ document.getElementById('refresh').addEventListener('click', async (e) => {
 
 document.getElementById('open-options').addEventListener('click', () => {
   chrome.runtime.openOptionsPage();
+});
+
+// ---- resizable popup ---------------------------------------------------
+// Chrome popups size to their document (max ~800x600), so a drag handle
+// that adjusts our own width and list height acts as a window resize.
+
+const contentEl = document.getElementById('content');
+const MIN_W = 340, MAX_W = 780, MIN_H = 240, MAX_H = 540;
+
+function applySize(w, h) {
+  document.body.style.width = `${w}px`;
+  contentEl.style.maxHeight = `${h}px`;
+}
+
+try {
+  const saved = JSON.parse(localStorage.getItem('focus-pr-size') || 'null');
+  if (saved?.w && saved?.h) applySize(saved.w, saved.h);
+} catch {
+  // Corrupt saved size: fall back to the CSS defaults.
+}
+
+const handle = document.getElementById('resize-handle');
+handle.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  handle.setPointerCapture(e.pointerId);
+  const startX = e.clientX;
+  const startY = e.clientY;
+  const startW = document.body.getBoundingClientRect().width;
+  const startH = contentEl.getBoundingClientRect().height;
+  let w = startW, h = startH;
+  const onMove = (ev) => {
+    w = Math.min(MAX_W, Math.max(MIN_W, Math.round(startW + ev.clientX - startX)));
+    h = Math.min(MAX_H, Math.max(MIN_H, Math.round(startH + ev.clientY - startY)));
+    applySize(w, h);
+  };
+  const onUp = () => {
+    handle.removeEventListener('pointermove', onMove);
+    handle.removeEventListener('pointerup', onUp);
+    localStorage.setItem('focus-pr-size', JSON.stringify({ w, h }));
+  };
+  handle.addEventListener('pointermove', onMove);
+  handle.addEventListener('pointerup', onUp);
 });
 
 void load();

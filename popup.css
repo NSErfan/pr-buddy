@@ -526,6 +526,31 @@ h2 {
   background: var(--bg-hover);
 }
 
+.sort-toggle {
+  margin-left: auto;
+}
+
+/* ---- resize handle ---- */
+
+#resize-handle {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  z-index: 30;
+  background:
+    linear-gradient(135deg, transparent 50%, var(--border) 50%, var(--border) 58%, transparent 58%,
+      transparent 68%, var(--border) 68%, var(--border) 76%, transparent 76%);
+}
+
+#resize-handle:hover {
+  background:
+    linear-gradient(135deg, transparent 50%, var(--fg-muted) 50%, var(--fg-muted) 58%, transparent 58%,
+      transparent 68%, var(--fg-muted) 68%, var(--fg-muted) 76%, transparent 76%);
+}
+
 .spin {
   animation: spin 1s linear infinite;
 }
