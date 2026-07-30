@@ -14,7 +14,13 @@
       margin: 0 auto;
       padding: 32px 24px;
     }
-    h1 { font-size: 18px; margin-bottom: 24px; }
+    h1 { font-size: 18px; }
+    .brand-head {
+      display: flex; align-items: center; gap: 12px; margin-bottom: 24px;
+      padding-bottom: 20px; border-bottom: 1px solid #d1d9e0;
+    }
+    .brand-head img { width: 40px; height: 40px; flex: none; }
+    .brand-head .sub { color: #59636e; font-size: 12.5px; margin-top: 2px; }
     .field { margin-bottom: 20px; }
     label { display: block; font-weight: 600; margin-bottom: 6px; }
     .hint { color: #59636e; font-size: 12px; margin-top: 6px; line-height: 1.5; }
@@ -46,6 +52,8 @@
     a { color: #0969da; }
     @media (prefers-color-scheme: dark) {
       body { color: #f0f6fc; background: #0d1117; }
+      .brand-head { border-color: #3d444d; }
+      .brand-head .sub { color: #9198a1; }
       .hint { color: #9198a1; }
       input[type="text"], input[type="password"], input[type="number"] { border-color: #3d444d; }
       #status { color: #3fb950; }
@@ -54,7 +62,13 @@
   </style>
 </head>
 <body>
-  <h1>GitHub Focus PR — Settings</h1>
+  <div class="brand-head">
+    <img src="icons/icon-128.png" alt="">
+    <div>
+      <h1>Focus PR</h1>
+      <div class="sub">One tab per pull request, and every comment link lands where it should.</div>
+    </div>
+  </div>
 
   <div class="field checkbox">
     <input type="checkbox" id="dedupe">

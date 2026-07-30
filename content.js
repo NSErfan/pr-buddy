@@ -40,22 +40,38 @@
   let hud = null;
   let hudHideTimer = null;
 
+  let hudLabel = null;
+
   function showHud(text) {
     if (!hud) {
       hud = document.createElement('div');
       hud.id = 'gh-focus-pr-hud';
       hud.style.cssText = [
         'position:fixed', 'bottom:16px', 'right:16px', 'z-index:2147483647',
-        'padding:8px 14px', 'border-radius:999px',
+        'display:flex', 'align-items:center', 'gap:8px',
+        'padding:7px 14px 7px 8px', 'border-radius:999px',
         'font:600 12px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif',
         'background:#1f883d', 'color:#ffffff',
         'box-shadow:0 4px 12px rgba(0,0,0,0.3)',
         'pointer-events:none', 'transition:opacity 0.3s', 'opacity:0',
       ].join(';');
+      // Brand mark so it is obvious which extension is talking. The icon is
+      // web-accessible on github.com; fall back to a text-only pill if not.
+      try {
+        const mark = document.createElement('img');
+        mark.src = chrome.runtime.getURL('icons/icon-32.png');
+        mark.alt = '';
+        mark.style.cssText = 'width:18px;height:18px;display:block;flex:none;border-radius:5px';
+        hud.append(mark);
+      } catch {
+        hud.style.paddingLeft = '14px';
+      }
+      hudLabel = document.createElement('span');
+      hud.append(hudLabel);
       document.documentElement.append(hud);
     }
     clearTimeout(hudHideTimer);
-    hud.textContent = text;
+    hudLabel.textContent = text;
     requestAnimationFrame(() => {
       if (hud) hud.style.opacity = '1';
     });
@@ -63,7 +79,7 @@
 
   function hideHud(finalText, delayMs = 2000) {
     if (!hud) return;
-    if (finalText) hud.textContent = finalText;
+    if (finalText && hudLabel) hudLabel.textContent = finalText;
     clearTimeout(hudHideTimer);
     hudHideTimer = setTimeout(() => {
       if (hud) hud.style.opacity = '0';
