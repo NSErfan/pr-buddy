@@ -77,10 +77,11 @@ function lastActivity(item) {
 
 function describeUpdates(entry) {
   if (!entry?.seen || !entry?.latest) return null;
+  const delta = (a, b) => Math.max(0, (a || 0) - (b || 0));
   const d =
-    Math.max(0, entry.latest.comments - entry.seen.comments) +
-    Math.max(0, entry.latest.reviewComments - entry.seen.reviewComments) +
-    Math.max(0, entry.latest.commits - entry.seen.commits);
+    delta(entry.latest.comments, entry.seen.comments) +
+    delta(entry.latest.reviewComments, entry.seen.reviewComments) +
+    delta(entry.latest.commits, entry.seen.commits);
   if (d > 0) return d;
   return entry.latest.updatedAt !== entry.seen.updatedAt ? 0 : null; // 0 = "updated"
 }
@@ -316,9 +317,13 @@ function renderOutline(tab, pr, prState, outline, cachedAt) {
 
   const entry = prState[pr.key];
   const updates = describeUpdates(entry);
+  newPill.hidden = updates === null;
   if (updates !== null) {
-    newPill.hidden = false;
     newPillText.textContent = updates > 0 ? `${updates} new` : 'updated';
+    newPill.title =
+      updates > 0
+        ? `${updates} comments/commits since you last viewed this PR — click to sync`
+        : 'The PR changed since you last viewed it — click to sync';
   }
 
   renderFilterBar(outline.items);
@@ -537,14 +542,54 @@ async function load() {
     noCurrent.textContent = 'This tab isn’t a pull request — pick one from the list.';
     setDropdownOpen(true);
   }
+
+  // The header height depends on the rendered title; re-clamp the list so
+  // the whole popup stays under Chrome's height cap.
+  reclampSize();
 }
 
-document.getElementById('refresh').addEventListener('click', async () => {
+// Sync: re-poll the API, and when the current PR has unseen activity, reload
+// its tab (the thread cache makes re-indexing cheap) and live-refresh the
+// outline as indexing progresses.
+async function sync() {
   statusEl.textContent = 'Syncing…';
   await send({ type: 'poll-now' });
+  const [{ prState }, [activeTab]] = await Promise.all([
+    send({ type: 'get-state' }),
+    chrome.tabs.query({ active: true, currentWindow: true }),
+  ]);
+  const pr = activeTab ? parsePrUrl(activeTab.url || '') : null;
+  if (pr && describeUpdates(prState[pr.key]) !== null) {
+    statusEl.textContent = 'Refreshing page…';
+    try {
+      await chrome.tabs.reload(activeTab.id);
+    } catch {
+      // Tab gone; the plain re-load below still refreshes the popup.
+    }
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 1000));
+      try {
+        const outline = await chrome.tabs.sendMessage(activeTab.id, { type: 'get-outline' });
+        if (outline?.ok) {
+          const { prState: fresh } = await send({ type: 'get-state' });
+          renderOutline(activeTab, pr, fresh, outline);
+          statusEl.textContent = outline.indexing ? 'Indexing…' : '';
+          if (!outline.indexing) break;
+        }
+      } catch {
+        // Content script not up yet (page still loading) — keep waiting.
+      }
+    }
+    statusEl.textContent = '';
+    return;
+  }
   statusEl.textContent = '';
   await load();
-});
+}
+
+document.getElementById('refresh').addEventListener('click', () => void sync());
+newPill.addEventListener('click', () => void sync());
 
 document.getElementById('open-options').addEventListener('click', () => {
   chrome.runtime.openOptionsPage();
@@ -552,19 +597,31 @@ document.getElementById('open-options').addEventListener('click', () => {
 
 // ---- resizable popup -------------------------------------------------------
 
-const MIN_W = 360, MAX_W = 780, MIN_H = 260, MAX_H = 540;
+const MIN_W = 360, MAX_W = 780, MIN_H = 200, MAX_H = 540;
+// Chrome hard-caps popups at 600px tall. If the document is taller, the
+// window clips and vertical resizing feels dead: the header, filters, and
+// footer are fixed costs, so the list must absorb the cap.
+const POPUP_MAX = 590;
+
+function chromeOverhead() {
+  return document.body.scrollHeight - contentEl.offsetHeight;
+}
 
 function applySize(w, h) {
   document.body.style.width = `${w}px`;
-  contentEl.style.height = `${h}px`;
+  const clamped = Math.min(h, Math.max(160, POPUP_MAX - chromeOverhead()));
+  contentEl.style.height = `${clamped}px`;
 }
 
-try {
-  const saved = JSON.parse(localStorage.getItem('focus-pr-size') || 'null');
-  if (saved?.w && saved?.h) applySize(saved.w, saved.h);
-} catch {
-  // Corrupt saved size: fall back to the CSS defaults.
+function reclampSize() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('focus-pr-size') || 'null');
+    applySize(saved?.w || 460, saved?.h || MAX_H);
+  } catch {
+    applySize(460, MAX_H);
+  }
 }
+reclampSize();
 
 const handle = document.getElementById('resize-handle');
 handle.addEventListener('pointerdown', (e) => {
