@@ -1,6 +1,7 @@
 const currentSection = document.getElementById('current');
 const currentTitle = document.getElementById('current-title');
 const currentMeta = document.getElementById('current-meta');
+const filterBar = document.getElementById('filter-bar');
 const outlineEl = document.getElementById('outline');
 const othersHeading = document.getElementById('others-heading');
 const othersList = document.getElementById('others-list');
@@ -9,7 +10,17 @@ const statusEl = document.getElementById('status');
 const CHEVRON =
   '<svg class="chevron" viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M6.22 3.22a.75.75 0 0 1 1.06 0l4.25 4.25a.75.75 0 0 1 0 1.06l-4.25 4.25a.75.75 0 0 1-1.06-1.06L9.94 8 6.22 4.28a.75.75 0 0 1 0-1.06Z"/></svg>';
 const JUMP =
-  '<svg class="jump" viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M3.75 2h3.5a.75.75 0 0 1 0 1.5h-3.5a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-3.5a.75.75 0 0 1 1.5 0v3.5A1.75 1.75 0 0 1 12.25 14h-8.5A1.75 1.75 0 0 1 2 12.25v-8.5C2 2.784 2.784 2 3.75 2Zm6.854-1h4.146a.25.25 0 0 1 .25.25v4.146a.25.25 0 0 1-.427.177L13.03 4.03 9.28 7.78a.751.751 0 0 1-1.06-1.06l3.75-3.75-1.543-1.543A.25.25 0 0 1 10.604 1Z"/></svg>';
+  '<svg viewBox="0 0 16 16" width="12" height="12"><path fill="currentColor" d="M3.75 2h3.5a.75.75 0 0 1 0 1.5h-3.5a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-3.5a.75.75 0 0 1 1.5 0v3.5A1.75 1.75 0 0 1 12.25 14h-8.5A1.75 1.75 0 0 1 2 12.25v-8.5C2 2.784 2.784 2 3.75 2Zm6.854-1h4.146a.25.25 0 0 1 .25.25v4.146a.25.25 0 0 1-.427.177L13.03 4.03 9.28 7.78a.751.751 0 0 1-1.06-1.06l3.75-3.75-1.543-1.543A.25.25 0 0 1 10.604 1Z"/></svg>';
+
+const FILTERS = [
+  { key: 'all', label: 'All', match: () => true },
+  { key: 'open', label: 'Open', match: (i) => i.type === 'thread' && !i.resolved },
+  { key: 'resolved', label: 'Resolved', match: (i) => i.type === 'thread' && i.resolved },
+  { key: 'outdated', label: 'Outdated', match: (i) => i.type === 'thread' && i.outdated },
+  { key: 'comments', label: 'Comments', match: (i) => i.type !== 'thread' },
+];
+
+let activeFilter = localStorage.getItem('focus-pr-filter') || 'all';
 
 function send(message) {
   return chrome.runtime.sendMessage(message);
@@ -90,7 +101,7 @@ async function gotoComment(tabId, baseUrl, anchorId) {
   }
 }
 
-function commentRow(tab, outline, c, small) {
+function commentRow(tab, outline, c) {
   const row = el('button', 'row');
   const avatar = el('img', 'avatar');
   avatar.src = c.avatar || '';
@@ -102,7 +113,6 @@ function commentRow(tab, outline, c, small) {
   col.append(who);
   if (c.snippet) col.append(el('div', 'snippet', c.snippet));
   row.append(avatar, col);
-  if (small) row.classList.add('small');
   row.addEventListener('click', () => void gotoComment(tab.id, outline.url, c.id));
   return row;
 }
@@ -118,38 +128,91 @@ function reviewRow(tab, outline, item) {
   return row;
 }
 
+function splitPath(path) {
+  const i = path.lastIndexOf('/');
+  if (i === -1) return { dir: '', base: path };
+  return { dir: path.slice(0, i), base: path.slice(i + 1) };
+}
+
 function threadGroup(tab, outline, item) {
   const wrap = el('div', 'thread');
   const head = el('button', 'thread-head');
-  head.innerHTML = CHEVRON;
-  const path = el('span', 'path', item.path || 'review thread');
-  // bdi keeps rtl ellipsis from reordering the path characters
-  const bdi = document.createElement('bdi');
-  bdi.textContent = item.path || 'review thread';
-  path.textContent = '';
-  path.append(bdi);
-  head.append(path);
-  head.append(chip('count', String(item.count)));
-  if (item.outdated) head.append(chip('outdated', 'outdated'));
-  if (item.resolved) head.append(chip('resolved', 'resolved'));
-  head.insertAdjacentHTML('beforeend', JUMP);
+  head.title = item.path || '';
+
+  const line1 = el('div', 'line1');
+  line1.innerHTML = CHEVRON;
+  const file = el('span', 'file');
+  const { base } = splitPath(item.path || 'review thread');
+  file.append(el('span', 'basename', base));
+  line1.append(file);
+  line1.append(chip('count', String(item.count)));
+  if (item.outdated) line1.append(chip('outdated', 'outdated'));
+  line1.append(item.resolved ? chip('resolved', 'resolved') : chip('open-thread', 'open'));
+  const jump = el('span', 'jump');
+  jump.innerHTML = JUMP;
+  jump.title = 'Go to thread on the page';
+  line1.append(jump);
+  head.append(line1);
+
+  const first = item.comments[0];
+  if (first) {
+    const line2 = el('div', 'line2');
+    const mini = el('img', 'mini-avatar');
+    mini.src = first.avatar || '';
+    mini.alt = '';
+    const preview = el('span', 'preview');
+    const author = el('b');
+    author.textContent = first.author || '—';
+    preview.append(author, ` ${first.snippet || ''}`);
+    line2.append(mini, preview);
+    head.append(line2);
+  }
 
   const body = el('div', 'thread-body');
-  for (const c of item.comments) body.append(commentRow(tab, outline, c, true));
+  const inner = el('div', 'thread-body-inner');
+  for (const c of item.comments) inner.append(commentRow(tab, outline, c));
+  body.append(inner);
 
   head.addEventListener('click', (e) => {
-    const anchor = item.comments[0]?.id;
-    if (e.target.closest('.jump') && anchor) {
-      void gotoComment(tab.id, outline.url, anchor);
+    if (e.target.closest('.jump') && item.anchor) {
+      void gotoComment(tab.id, outline.url, item.anchor);
       return;
     }
-    if (!item.comments.length && anchor === undefined) return;
-    wrap.classList.toggle('expanded');
+    if (item.comments.length) {
+      wrap.classList.toggle('expanded');
+    } else if (item.anchor) {
+      // Content not indexed yet: jump straight to the thread on the page.
+      void gotoComment(tab.id, outline.url, item.anchor);
+    }
   });
 
   wrap.append(head, body);
   return wrap;
 }
+
+function renderFilterBar(items) {
+  filterBar.hidden = false;
+  filterBar.textContent = '';
+  const counts = Object.fromEntries(
+    FILTERS.map((f) => [f.key, items.filter(f.match).length]),
+  );
+  if (!counts[activeFilter]) activeFilter = 'all';
+  for (const f of FILTERS) {
+    if (f.key !== 'all' && !counts[f.key]) continue;
+    const btn = el('button', 'filter-chip');
+    if (f.key === activeFilter) btn.classList.add('active');
+    btn.append(el('span', '', f.label), el('span', 'n', String(counts[f.key])));
+    btn.addEventListener('click', () => {
+      activeFilter = f.key;
+      localStorage.setItem('focus-pr-filter', f.key);
+      renderFilterBar(items);
+      renderItems();
+    });
+    filterBar.append(btn);
+  }
+}
+
+let renderItems = () => {};
 
 function renderOutline(tab, pr, prState, outline) {
   currentSection.hidden = false;
@@ -162,24 +225,31 @@ function renderOutline(tab, pr, prState, outline) {
   const updates = describeUpdates(entry);
   if (updates) currentMeta.append(chip('updates', updates));
 
-  const threads = outline.items.filter((i) => i.type === 'thread');
-  const comments = outline.items.filter((i) => i.type !== 'thread');
-  currentMeta.append(
-    el('span', '', `${comments.length} comments · ${threads.length} threads`),
-  );
+  renderFilterBar(outline.items);
 
-  outlineEl.textContent = '';
-  if (outline.indexing) {
-    outlineEl.append(el('div', 'notice', 'Still indexing this page — reopen in a moment for the full list.'));
-  }
-  for (const item of outline.items) {
-    if (item.type === 'thread') outlineEl.append(threadGroup(tab, outline, item));
-    else if (item.type === 'review') outlineEl.append(reviewRow(tab, outline, item));
-    else outlineEl.append(commentRow(tab, outline, item));
-  }
-  if (!outline.items.length && !outline.indexing) {
-    outlineEl.append(el('div', 'empty', 'No conversation on this pull request yet.'));
-  }
+  renderItems = () => {
+    const filter = FILTERS.find((f) => f.key === activeFilter) || FILTERS[0];
+    const items = outline.items.filter(filter.match);
+    outlineEl.textContent = '';
+    if (outline.indexing) {
+      outlineEl.append(
+        el('div', 'notice', 'Still indexing this page — reopen in a moment for the full list.'),
+      );
+    }
+    for (const item of items) {
+      if (item.type === 'thread') outlineEl.append(threadGroup(tab, outline, item));
+      else if (item.type === 'review') outlineEl.append(reviewRow(tab, outline, item));
+      else outlineEl.append(commentRow(tab, outline, item));
+    }
+    if (!items.length && !outline.indexing) {
+      outlineEl.append(
+        el('div', 'empty', activeFilter === 'all'
+          ? 'No conversation on this pull request yet.'
+          : `Nothing matches “${filter.label}”.`),
+      );
+    }
+  };
+  renderItems();
 }
 
 function renderReloadNotice(tab) {
@@ -229,12 +299,10 @@ function renderOthers(prState, openTabs, currentKey) {
     col.append(who);
 
     const meta = el('div', 'snippet');
-    const bits = [
+    meta.textContent =
       row.pr.kind === 'commit'
         ? `${row.pr.owner}/${row.pr.repo} @ ${row.pr.sha.slice(0, 7)}`
-        : `${row.pr.owner}/${row.pr.repo} #${row.pr.number}`,
-    ];
-    meta.textContent = bits.join(' ');
+        : `${row.pr.owner}/${row.pr.repo} #${row.pr.number}`;
     const state = stateChip(entry);
     if (state) meta.append(' ', state);
     const updates = describeUpdates(entry);

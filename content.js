@@ -502,18 +502,23 @@
           .split(/\s+(Outdated|Show resolved|Hide resolved|Resolved)\b/i)[0]
           .trim()
           .slice(0, 160);
-        const comments = [...node.querySelectorAll('[id^="discussion_r"]')]
-          .filter((e) => /^discussion_r\d+$/.test(e.id) && !seen.has(e.id))
-          .map((e) => {
-            seen.add(e.id);
-            return commentInfo(e);
-          });
+        const hiddenIds = (node.getAttribute('data-hidden-comment-ids') || '')
+          .split(/\D+/)
+          .filter(Boolean);
+        const commentEls = [...node.querySelectorAll('[id^="discussion_r"]')].filter((e) =>
+          /^discussion_r\d+$/.test(e.id),
+        );
+        // GitHub can render the same thread container twice — dedupe whole
+        // threads by identity, never individual comments (a global comment
+        // dedupe leaves the duplicate thread with an empty, unexpandable
+        // comment list).
+        const sig = hiddenIds[0] || commentEls[0]?.id;
+        if (!sig || seen.has(`thread:${sig}`)) continue;
+        seen.add(`thread:${sig}`);
+        const comments = commentEls.map(commentInfo);
         // Content not loaded yet (indexing still running): fall back to the
         // hidden-comment count so the popup can still show the thread.
-        const hiddenCount = (node.getAttribute('data-hidden-comment-ids') || '')
-          .split(/\D+/)
-          .filter(Boolean).length;
-        if (!comments.length && !hiddenCount) continue;
+        if (!comments.length && !hiddenIds.length) continue;
         items.push({
           type: 'thread',
           path,
@@ -522,7 +527,8 @@
             /outdated/i.test(l.textContent || ''),
           ),
           comments,
-          count: comments.length || hiddenCount,
+          count: comments.length || hiddenIds.length,
+          anchor: comments[0]?.id || (hiddenIds[0] ? `discussion_r${hiddenIds[0]}` : ''),
         });
       }
     }
