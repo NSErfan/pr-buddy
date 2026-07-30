@@ -445,6 +445,9 @@ const MIN_W = 340, MAX_W = 780, MIN_H = 240, MAX_H = 540;
 
 function applySize(w, h) {
   document.body.style.width = `${w}px`;
+  // Fixed height (not just max) so the popup window truly grows and
+  // shrinks vertically even when the list is short.
+  contentEl.style.height = `${h}px`;
   contentEl.style.maxHeight = `${h}px`;
 }
 

@@ -455,16 +455,32 @@
 
   function commentInfo(el) {
     const t = el.querySelector('relative-time');
-    return {
-      id: el.id,
-      author: el.querySelector('.author')?.textContent?.trim() || '',
-      avatar: avatarSrc(el),
-      time: t?.getAttribute('datetime') || '',
-      snippet: ([...el.querySelectorAll('.comment-body')][0]?.textContent || '')
-        .trim()
-        .replace(/\s+/g, ' ')
-        .slice(0, 140),
-    };
+    let author = el.querySelector('.author')?.textContent?.trim() || '';
+    let avatar = avatarSrc(el);
+    let time = t?.getAttribute('datetime') || '';
+    let snippet = ([...el.querySelectorAll('.comment-body')][0]?.textContent || '')
+      .trim()
+      .replace(/\s+/g, ' ')
+      .slice(0, 140);
+    if (!snippet) {
+      // Copilot review comments are React islands: no server-rendered
+      // markup, just <link> preloads and a JSON props payload.
+      const script = el.querySelector('script[type="application/json"]');
+      if (script) {
+        try {
+          const c = JSON.parse(script.textContent)?.props?.comment;
+          if (c) {
+            author = c.author?.login || c.author?.displayName || author || 'Copilot';
+            avatar = c.author?.avatarUrl || avatar;
+            time = c.createdAt || c.publishedAt || time;
+            snippet = (c.body || '').trim().replace(/\s+/g, ' ').slice(0, 140);
+          }
+        } catch {
+          // Unparseable payload: keep whatever the DOM gave us.
+        }
+      }
+    }
+    return { id: el.id, author, avatar, time, snippet };
   }
 
   function buildOutline() {
