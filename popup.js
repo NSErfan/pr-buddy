@@ -422,13 +422,14 @@ function renderWho(people, onChange) {
 async function gotoComment(tabId, baseUrl, anchorId) {
   const url = `${baseUrl}#${anchorId}`;
   saveViewState({ scroll: contentEl.scrollTop });
+  // One navigation ladder, in one place: the background's focusPrTab knows
+  // how to focus the window, reach (or inject) the content script, and fall
+  // back to navigate+reload. The popup's old inline version skipped all of
+  // that — a tab without the content script got a hash-only tabs.update,
+  // which never reloads, so collapsed/paginated comments silently didn't
+  // come into view; and a closed tab made the click do nothing at all.
   try {
-    await chrome.tabs.update(tabId, { active: true });
-    try {
-      await chrome.tabs.sendMessage(tabId, { type: 'goto-anchor', url });
-    } catch {
-      await chrome.tabs.update(tabId, { url });
-    }
+    await send({ type: 'goto-url', tabId, url });
   } finally {
     window.close();
   }
@@ -1076,10 +1077,22 @@ function chromeOverhead() {
   return document.body.scrollHeight - contentEl.offsetHeight;
 }
 
-function applySize(w, h) {
+// The saved size assumes the action popup, where the window follows the
+// body. In a real window (macOS-fullscreen detached popup, popup.html opened
+// as a tab/window) the window leads: a fixed 460px body leaves a dead gutter
+// on the right and a stub list above the fold. When the viewport is larger
+// than the box we asked for, fill it instead — except during a handle drag
+// (fill: false): the window shrinks with a lag there, and adopting its stale
+// size would make every shrink fight itself back to where it started.
+function applySize(w, h, { fill = true } = {}) {
+  // Fill caps at MAX_W; body { margin-inline: auto } centers the column in
+  // anything wider, so a maximized window reads as a layout, not a bug.
+  if (fill && window.innerWidth > w + 4) w = Math.min(window.innerWidth, MAX_W);
   document.body.style.width = `${w}px`;
-  const clamped = Math.min(h, Math.max(160, POPUP_MAX - chromeOverhead()));
-  contentEl.style.height = `${clamped}px`;
+  const overhead = chromeOverhead();
+  let target = Math.min(h, Math.max(160, POPUP_MAX - overhead));
+  if (fill) target = Math.max(target, window.innerHeight - overhead);
+  contentEl.style.height = `${target}px`;
 }
 
 function reclampSize() {
@@ -1091,6 +1104,9 @@ function reclampSize() {
   }
 }
 reclampSize();
+
+// Real windows resize; the action popup never fires this.
+window.addEventListener('resize', () => reclampSize());
 
 const handle = document.getElementById('resize-handle');
 handle.addEventListener('pointerdown', (e) => {
@@ -1104,7 +1120,7 @@ handle.addEventListener('pointerdown', (e) => {
   const onMove = (ev) => {
     w = Math.min(MAX_W, Math.max(MIN_W, Math.round(startW + ev.clientX - startX)));
     h = Math.min(MAX_H, Math.max(MIN_H, Math.round(startH + ev.clientY - startY)));
-    applySize(w, h);
+    applySize(w, h, { fill: false });
   };
   const onUp = () => {
     handle.removeEventListener('pointermove', onMove);

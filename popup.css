@@ -74,6 +74,9 @@
 
 body {
   width: 460px;
+  /* In a real window wider than the column (detached popup, opened as a
+     tab), center rather than hug the left edge with a dead right gutter. */
+  margin-inline: auto;
   font-family: "Instrument Sans", system-ui, sans-serif;
   font-size: 14px;
   color: var(--fg);

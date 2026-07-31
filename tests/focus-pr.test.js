@@ -216,3 +216,44 @@ describe('index-pr (background indexing for the Files tab)', () => {
     assert.equal(bg.calls.removed.length, 1, 'temp tab still cleaned up');
   });
 });
+
+describe('goto-url (jumping to a comment from the popup)', () => {
+  const ANCHOR = `${PR_A}#discussion_r42`;
+
+  test('same page with a content script: focus window+tab, hand off the anchor, no reload', async () => {
+    const bg = loadBackground({ tabs: [{ id: 5, url: PR_A, windowId: 12 }] });
+    const gotos = [];
+    bg.sandbox.chrome.tabs.sendMessage = async (id, msg) => {
+      gotos.push({ id, msg });
+      return { ok: true };
+    };
+    await sendFocus(bg, { type: 'goto-url', tabId: 5, url: ANCHOR });
+    assert.deepEqual(plain(bg.calls.focusedWindows), [{ id: 12, props: { focused: true } }]);
+    assert.deepEqual(plain(bg.calls.activated), [{ id: 5, props: { active: true } }]);
+    assert.deepEqual(plain(gotos), [{ id: 5, msg: { type: 'goto-anchor', url: ANCHOR } }]);
+    assert.equal(bg.calls.reloaded.length, 0, 'no reload when the content script took it');
+  });
+
+  test('same page, no content script even after injection: navigate + reload (the old popup path silently did neither)', async () => {
+    const bg = loadBackground({ tabs: [{ id: 5, url: PR_A, windowId: 12 }] });
+    // default sendMessage throws — a tab from before the extension existed
+    await sendFocus(bg, { type: 'goto-url', tabId: 5, url: ANCHOR });
+    const urlUpdates = plain(bg.calls.activated).filter((c) => c.props.url);
+    assert.deepEqual(urlUpdates, [{ id: 5, props: { url: ANCHOR } }]);
+    assert.deepEqual(plain(bg.calls.reloaded), [5], 'hash-only updates never reload on their own');
+  });
+
+  test('tab on a different page: plain navigation carries the anchor', async () => {
+    const bg = loadBackground({ tabs: [{ id: 5, url: `${PR_A}/files`, windowId: 12 }] });
+    await sendFocus(bg, { type: 'goto-url', tabId: 5, url: ANCHOR });
+    const urlUpdates = plain(bg.calls.activated).filter((c) => c.props.url);
+    assert.deepEqual(urlUpdates, [{ id: 5, props: { url: ANCHOR } }]);
+    assert.equal(bg.calls.reloaded.length, 0);
+  });
+
+  test('tab closed since the popup rendered: open the URL in a fresh tab', async () => {
+    const bg = loadBackground({ tabs: [] });
+    await sendFocus(bg, { type: 'goto-url', tabId: 99, url: ANCHOR });
+    assert.deepEqual(plain(bg.calls.created), [{ url: ANCHOR, active: true }]);
+  });
+});

@@ -408,6 +408,25 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ prState, openTabs });
         break;
       }
+      case 'goto-url': {
+        // Jump to a specific comment from the popup. Runs through the same
+        // ladder as external links (focusPrTab): focus the tab's WINDOW, ask
+        // the content script to expand-and-scroll, inject it if it's missing
+        // (tab predates the extension), and only then navigate + reload.
+        // The popup used to do a bare tabs.update itself: with no content
+        // script, a hash-only URL change doesn't reload, GitHub's native
+        // anchor jump can't reach collapsed/paginated comments, and the
+        // target silently never came into view.
+        try {
+          const tab = await chrome.tabs.get(message.tabId);
+          await focusPrTab(tab, message.url);
+        } catch {
+          // Tab closed since the popup rendered: open the URL fresh.
+          await chrome.tabs.create({ url: message.url, active: true });
+        }
+        sendResponse({ ok: true });
+        break;
+      }
       case 'focus-pr': {
         if (message.newTab && message.url) {
           // Explicit "open in its own tab" — bypass dedupe for this one.
