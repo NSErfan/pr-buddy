@@ -1,6 +1,6 @@
 importScripts('cache.js');
 
-// GitHub Focus PR — background service worker.
+// PR Buddy — background service worker.
 //
 // Responsibilities:
 // 1. Tab dedupe: when a new tab is opened to a PR that already has a tab,
@@ -370,7 +370,7 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 // the shared expiry rules live in cache.js.
 async function pruneCaches() {
   const all = await chrome.storage.local.get(null);
-  const expired = GFPCache.expiredCacheKeys(all, Date.now());
+  const expired = PRBuddyCache.expiredCacheKeys(all, Date.now());
   if (expired.length) await chrome.storage.local.remove(expired);
 }
 

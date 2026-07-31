@@ -1,4 +1,4 @@
-// GitHub Focus PR — content script for PR and commit pages.
+// PR Buddy — content script for PR and commit pages.
 //
 // On load it builds a complete "index" of the conversation: expands every
 // "N hidden items / Load more…" range and force-loads lazy thread fragments,
@@ -10,8 +10,8 @@
 // than the loaded page.
 
 (() => {
-  if (window.__ghFocusPrContentLoaded) return; // guard against double injection
-  window.__ghFocusPrContentLoaded = true;
+  if (window.__prBuddyContentLoaded) return; // guard against double injection
+  window.__prBuddyContentLoaded = true;
 
   const PAGE_RE = /^\/[^/]+\/[^/]+\/(?:pull\/\d+|commit\/[0-9a-f]+)(?:\/|$)/i;
   const MAX_ROUNDS = 60; // safety cap on "Load more" clicks
@@ -52,7 +52,7 @@
   function showHud(text) {
     if (!hud) {
       hud = document.createElement('div');
-      hud.id = 'gh-focus-pr-hud';
+      hud.id = 'pr-buddy-hud';
       hud.style.cssText = [
         'position:fixed', 'bottom:16px', 'right:16px', 'z-index:2147483647',
         'display:flex', 'align-items:center', 'gap:8px',
@@ -249,7 +249,7 @@
   // the thread invisibly (it stays visually collapsed).
 
   function deferredThreadContainers() {
-    return self.GFPCache.deferredThreadContainers(document);
+    return self.PRBuddyCache.deferredThreadContainers(document);
   }
 
   async function loadDeferredContainer(container) {
@@ -336,7 +336,7 @@
   // URLs whose content came from cache this load accumulate here across the
   // restore passes; on save their original fetchedAt is carried forward.
 
-  const Cache = self.GFPCache;
+  const Cache = self.PRBuddyCache;
   const restoredUrls = new Set();
 
   async function restoreCachedThreads() {
@@ -425,8 +425,8 @@
     try {
       await gotoAnchorInner(url);
     } catch (err) {
-      console.error('[gh-focus-pr] goto-anchor failed:', err);
-      showHud('Focus PR error — see console');
+      console.error('[pr-buddy] goto-anchor failed:', err);
+      showHud('PR Buddy error — see console');
       hideHud(undefined, 4000);
     }
   }

@@ -39,15 +39,26 @@ const FILTERS = [
   { key: 'comments', label: 'Comments', match: (i) => i.type !== 'thread' },
 ];
 
-let activeFilter = localStorage.getItem('focus-pr-filter') || 'all';
-let sortMode = localStorage.getItem('focus-pr-sort') || 'timeline';
+// The extension was called "Focus PR" before it was called PR Buddy. Carry
+// the old keys over once so nobody's filter, sort, size, or per-PR view state
+// is silently reset by the rename.
+for (const name of ['filter', 'sort', 'size', 'view']) {
+  const old = localStorage.getItem(`focus-pr-${name}`);
+  if (old !== null && localStorage.getItem(`pr-buddy-${name}`) === null) {
+    localStorage.setItem(`pr-buddy-${name}`, old);
+  }
+  localStorage.removeItem(`focus-pr-${name}`);
+}
+
+let activeFilter = localStorage.getItem('pr-buddy-filter') || 'all';
+let sortMode = localStorage.getItem('pr-buddy-sort') || 'timeline';
 
 // ---- per-PR view state -----------------------------------------------------
 // The popup reopens exactly where it was left: expanded cards, scroll
 // position, and keyboard selection survive closing the popup (e.g. after
 // jumping to a comment on the page).
 
-const VIEW_KEY = 'focus-pr-view';
+const VIEW_KEY = 'pr-buddy-view';
 let viewPrKey = null;
 let viewState = { expanded: [], scroll: 0, sel: '', people: [], query: '' };
 
@@ -422,7 +433,7 @@ async function cachedOutline(key) {
     const storageKey = `outlineCache:${key}`;
     const { [storageKey]: entry } = await chrome.storage.local.get(storageKey);
     // A clobbered/empty outline (pre-0.18.1 bug wrote these) counts as absent.
-    if (entry?.outline?.items?.length && GFPCache.isFresh(entry)) return entry;
+    if (entry?.outline?.items?.length && PRBuddyCache.isFresh(entry)) return entry;
   } catch {
     // Storage unavailable: no cache.
   }
@@ -597,7 +608,7 @@ function renderFilterBar(items) {
     btn.append(el('span', '', f.label), el('span', 'n', String(counts[f.key])));
     btn.addEventListener('click', () => {
       activeFilter = f.key;
-      localStorage.setItem('focus-pr-filter', f.key);
+      localStorage.setItem('pr-buddy-filter', f.key);
       renderFilterBar(items);
       renderItems(items);
     });
@@ -653,7 +664,7 @@ function renderOutline(tab, pr, prState, outline, cachedAt, mode) {
   };
   searchBtn.onclick = () => (searchOpen ? closeSearch() : openSearch());
   searchClose.onclick = closeSearch;
-  window.__gfpOpenSearch = openSearch;
+  window.__prbOpenSearch = openSearch;
 
   function openSearch() {
     searchOpen = true;
@@ -750,7 +761,7 @@ function renderOutline(tab, pr, prState, outline, cachedAt, mode) {
 
   sortToggle.onclick = () => {
     sortMode = sortMode === 'recent' ? 'timeline' : 'recent';
-    localStorage.setItem('focus-pr-sort', sortMode);
+    localStorage.setItem('pr-buddy-sort', sortMode);
     renderItems();
   };
 }
@@ -768,7 +779,7 @@ function renderIndexPrompt(tab, pr, prState) {
     const res = await send({ type: 'index-pr', key: pr.key, url: conversationUrl });
     const cached = await cachedOutline(pr.key);
     if (cached) {
-      window.__gfpOutlineUrl = cached.outline.url;
+      window.__prbOutlineUrl = cached.outline.url;
       renderOutline(tab, pr, prState, cached.outline, cached.savedAt, 'subpage');
     } else {
       notice.textContent = res?.ok
@@ -923,7 +934,7 @@ document.addEventListener('keydown', (e) => {
   if (e.target instanceof Element && e.target.closest('input, textarea')) return;
   if (e.key === '/') {
     e.preventDefault();
-    window.__gfpOpenSearch?.();
+    window.__prbOpenSearch?.();
     return;
   }
   const k = e.key.toLowerCase();
@@ -935,7 +946,7 @@ document.addEventListener('keydown', (e) => {
   } else if (k === 'g' && selIndex >= 0) {
     const card = cards()[selIndex];
     const anchor = card?.dataset.anchor;
-    if (anchor && window.__gfpTab) void gotoComment(window.__gfpTab.id, window.__gfpOutlineUrl, anchor);
+    if (anchor && window.__prbTab) void gotoComment(window.__prbTab.id, window.__prbOutlineUrl, anchor);
   }
 });
 
@@ -952,7 +963,7 @@ async function load() {
   const pr = activeTab ? parsePrUrl(activeTab.url || '') : null;
   if (pr) {
     currentKey = pr.key;
-    window.__gfpTab = activeTab;
+    window.__prbTab = activeTab;
     loadViewState(pr.key);
     try {
       const outline = await chrome.tabs.sendMessage(activeTab.id, { type: 'get-outline' });
@@ -962,11 +973,11 @@ async function load() {
         // cache; clicks flip this tab to the conversation at the comment.
         const cached = await cachedOutline(pr.key);
         if (cached) {
-          window.__gfpOutlineUrl = cached.outline.url;
+          window.__prbOutlineUrl = cached.outline.url;
           renderOutline(activeTab, pr, prState, cached.outline, cached.savedAt, 'subpage');
         } else renderIndexPrompt(activeTab, pr, prState);
       } else {
-        window.__gfpOutlineUrl = outline.url;
+        window.__prbOutlineUrl = outline.url;
         if (outline.indexing && !outline.items.length) {
           const cached = await cachedOutline(pr.key);
           if (cached) renderOutline(activeTab, pr, prState, cached.outline, cached.savedAt);
@@ -976,7 +987,7 @@ async function load() {
     } catch {
       const cached = await cachedOutline(pr.key);
       if (cached) {
-        window.__gfpOutlineUrl = cached.outline.url;
+        window.__prbOutlineUrl = cached.outline.url;
         renderOutline(activeTab, pr, prState, cached.outline, cached.savedAt);
       } else renderReloadNotice(activeTab);
     }
@@ -1062,7 +1073,7 @@ function applySize(w, h) {
 
 function reclampSize() {
   try {
-    const saved = JSON.parse(localStorage.getItem('focus-pr-size') || 'null');
+    const saved = JSON.parse(localStorage.getItem('pr-buddy-size') || 'null');
     applySize(saved?.w || 460, saved?.h || MAX_H);
   } catch {
     applySize(460, MAX_H);
@@ -1087,7 +1098,7 @@ handle.addEventListener('pointerdown', (e) => {
   const onUp = () => {
     handle.removeEventListener('pointermove', onMove);
     handle.removeEventListener('pointerup', onUp);
-    localStorage.setItem('focus-pr-size', JSON.stringify({ w, h }));
+    localStorage.setItem('pr-buddy-size', JSON.stringify({ w, h }));
   };
   handle.addEventListener('pointermove', onMove);
   handle.addEventListener('pointerup', onUp);

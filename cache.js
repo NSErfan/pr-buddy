@@ -1,4 +1,4 @@
-// GitHub Focus PR — thread/outline cache.
+// PR Buddy — thread/outline cache.
 //
 // Shared by the content script, the background worker (importScripts), the
 // popup, and the Node test suite (module.exports). All DOM and storage
@@ -17,7 +17,7 @@
 (function (root, factory) {
   const api = factory();
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
-  else root.GFPCache = api;
+  else root.PRBuddyCache = api;
 })(typeof self !== 'undefined' ? self : globalThis, function () {
   const CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 

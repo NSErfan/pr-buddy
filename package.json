@@ -1,8 +1,8 @@
 {
-  "name": "github-focus-pr",
+  "name": "pr-buddy",
   "version": "0.11.0",
   "private": true,
-  "description": "Dev harness for the GitHub Focus PR extension (tests only \u2014 the extension itself has no build step).",
+  "description": "Dev harness for the PR Buddy extension (tests only \u2014 the extension itself has no build step).",
   "scripts": {
     "test": "node --test 'tests/**/*.test.js'"
   },
