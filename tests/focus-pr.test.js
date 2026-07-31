@@ -257,3 +257,63 @@ describe('goto-url (jumping to a comment from the popup)', () => {
     assert.deepEqual(plain(bg.calls.created), [{ url: ANCHOR, active: true }]);
   });
 });
+
+describe('dedupe never eats a click', () => {
+  test('a stale match (unfocusable/closed) leaves the new tab alone', async () => {
+    // The old order removed the newcomer FIRST and focused second: when the
+    // "existing" tab could not actually be focused, the click had already
+    // been swallowed and no visible tab opened at all.
+    const bg = loadBackground({ tabs: [{ id: 1, url: PR_A, windowId: 10 }] });
+    bg.sandbox.chrome.windows.update = async () => {
+      throw new Error('window cannot be focused');
+    };
+    const dup = { id: 50, url: PR_A, windowId: 20 };
+    bg.tabs.push(dup);
+    await simulateTabBirth(bg, dup);
+    assert.deepEqual(bg.calls.removed, [], 'the new tab must survive when focusing fails');
+  });
+
+  test('the existing tab is focused before the newcomer is closed', async () => {
+    const bg = loadBackground({ tabs: [{ id: 1, url: PR_A, windowId: 10 }] });
+    const order = [];
+    const origRemove = bg.sandbox.chrome.tabs.remove;
+    bg.sandbox.chrome.tabs.remove = async (id) => {
+      order.push(`remove:${id}`);
+      return origRemove(id);
+    };
+    const origFocus = bg.sandbox.chrome.windows.update;
+    bg.sandbox.chrome.windows.update = async (id, props) => {
+      order.push(`focus-window:${id}`);
+      return origFocus(id, props);
+    };
+    const dup = { id: 51, url: PR_A, windowId: 20 };
+    bg.tabs.push(dup);
+    await simulateTabBirth(bg, dup);
+    assert.deepEqual(order, ['focus-window:10', 'remove:51']);
+  });
+
+  test("an index temp tab never counts as the PR's open tab", async () => {
+    // A user click during background indexing used to dedupe INTO the temp
+    // tab — which is destroyed when indexing ends, leaving no tab at all.
+    const bg = loadBackground({ tabs: [] });
+    bg.sandbox.chrome.tabs.sendMessage = async () => {
+      throw new Error('never ready');
+    };
+    const indexing = sendFocus(bg, {
+      type: 'index-pr', key: 'acme/app#1', url: PR_A, pollMs: 10, timeoutMs: 300,
+    });
+    await new Promise((r) => setTimeout(r, 30));
+    const temp = bg.tabs.find((t) => t.id >= 1000);
+    assert.ok(temp, 'index temp tab exists');
+
+    const userTab = { id: 60, url: PR_A, windowId: 20 };
+    bg.tabs.push(userTab);
+    await simulateTabBirth(bg, userTab);
+    assert.ok(!bg.calls.removed.includes(60), "the user's tab must survive");
+    assert.deepEqual(plain(bg.calls.focusedWindows), [], 'no focus theft to the hidden temp');
+
+    await indexing;
+    assert.ok(bg.calls.removed.includes(temp.id), 'temp still cleaned up');
+    assert.ok(bg.tabs.some((t) => t.id === 60), "the user's tab is still open");
+  });
+});

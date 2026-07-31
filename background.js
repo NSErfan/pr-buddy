@@ -74,10 +74,16 @@ async function queryPrTabs() {
   return chrome.tabs.query({ url: TRACKED_URL_PATTERNS });
 }
 
+// Hidden background tabs opened by index-pr. They match the PR's URL but are
+// throwaways — never dedupe a user's click into one (it gets destroyed when
+// indexing finishes, leaving the user with no tab at all), and never treat
+// one as "the PR is already open".
+const hiddenIndexTabs = new Set();
+
 async function findPrTab(key, excludeTabId, targetUrl) {
   const tabs = await queryPrTabs();
   const candidates = tabs.filter(
-    (t) => t.id !== excludeTabId && parseTrackedUrl(t.url)?.key === key,
+    (t) => t.id !== excludeTabId && !hiddenIndexTabs.has(t.id) && parseTrackedUrl(t.url)?.key === key,
   );
   if (candidates.length <= 1 || !targetUrl) return candidates[0] || null;
   // Prefer the tab already on the link's page (an anchor there is a pure
@@ -158,6 +164,7 @@ chrome.tabs.onCreated.addListener((tab) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   freshTabs.delete(tabId);
   dedupeExemptTabs.delete(tabId);
+  hiddenIndexTabs.delete(tabId);
 });
 
 chrome.webNavigation.onCommitted.addListener((details) => {
@@ -219,12 +226,21 @@ async function maybeRedirect(newTabId, url) {
   }
 
   freshTabs.delete(newTabId);
+  // The existing tab must prove it is alive and focusable BEFORE the
+  // newcomer dies. The old order (remove first, focus second) ate the click
+  // whenever the match was stale — closed in the meantime, or in a window
+  // the browser refuses to focus: the new tab was already gone and nothing
+  // visible opened. A brief two-tab flash beats a vanished click.
+  try {
+    await focusPrTab(existing, url);
+  } catch {
+    return;
+  }
   try {
     await chrome.tabs.remove(newTabId);
   } catch {
-    // Already closed; still focus the existing tab.
+    // Already closed by the user/browser; the existing tab is focused.
   }
-  await focusPrTab(existing, url);
 }
 
 // Focus a PR tab and land on targetUrl without reloading if we can avoid it.
@@ -467,6 +483,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         }
         markIntentionalDuplicate(message.key);
         const temp = await chrome.tabs.create({ url: message.url, active: false });
+        hiddenIndexTabs.add(temp.id);
         const pollMs = message.pollMs || 2000;
         const deadline = Date.now() + (message.timeoutMs || 120_000);
         let indexed = false;
@@ -486,6 +503,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           await chrome.tabs.remove(temp.id);
         } catch {
           // Already gone.
+        } finally {
+          hiddenIndexTabs.delete(temp.id);
         }
         sendResponse({ ok: indexed });
         break;
