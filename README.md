@@ -102,10 +102,13 @@ Popup → **Settings**:
 - **Reuse existing PR tabs** — toggle the dedupe behavior.
 - **Auto-expand hidden timeline items** — toggle the "Load more…" auto-clicking.
 - **Poll interval** — how often to check the API (default 5 min).
-- **Personal access token** — optional, but required for private repositories
+- **Personal access token** — optional, but required for private repositories.
   and a higher rate limit (5,000/hr instead of 60/hr). A fine-grained token with
   read-only *Pull requests* permission is enough. Stored only in local extension
   storage, never sent anywhere but api.github.com.
+
+If your organisation suffixes every display name with the company — "Jane
+Doe-Acme" — add it to `ORG_NAME_SUFFIXES` in `popup.js` to reclaim the width.
 
 ## How it's put together
 

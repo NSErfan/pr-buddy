@@ -78,8 +78,8 @@ const KEY = 'threadCache:owner/repo#1';
 describe('prCacheKey', () => {
   test('lowercases the repo part but preserves the prefix case', () => {
     assert.equal(
-      Cache.prCacheKey('threadCache', '/BandLab/BandLab-iOS/pull/22279'),
-      'threadCache:bandlab/bandlab-ios#22279',
+      Cache.prCacheKey('threadCache', '/Acme/Acme-iOS/pull/22279'),
+      'threadCache:acme/acme-ios#22279',
     );
   });
 
@@ -95,9 +95,9 @@ describe('prCacheKey', () => {
     // 0.19.1 bug was this contract silently breaking (prefix lowercased),
     // which made cached outlines invisible in production while previews
     // with permissive mocks stayed green.
-    const prKey = 'bandlab/bandlab-ios#22234'; // parsePrUrl lowercases like this
+    const prKey = 'acme/acme-ios#22234'; // parsePrUrl lowercases like this
     assert.equal(
-      Cache.prCacheKey('outlineCache', '/BandLab/bandlab-iOS/pull/22234/changes'),
+      Cache.prCacheKey('outlineCache', '/Acme/acme-iOS/pull/22234/changes'),
       `outlineCache:${prKey}`,
     );
   });

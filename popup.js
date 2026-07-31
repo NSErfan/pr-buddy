@@ -356,8 +356,19 @@ function collectPeople(items) {
   return [...byName.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 
+// Some orgs suffix every display name with the company ("Jane Doe-Acme"),
+// which wastes width in a 460px popup. Add yours here to strip it.
+const ORG_NAME_SUFFIXES = ['BandLab'];
+
 function shortName(name) {
-  return (name || '').replace(/\[bot\]$/i, '').replace(/-BandLab$/i, '');
+  let out = (name || '').replace(/\[bot\]$/i, '');
+  for (const org of ORG_NAME_SUFFIXES) {
+    if (out.toLowerCase().endsWith(`-${org.toLowerCase()}`)) {
+      out = out.slice(0, -(org.length + 1));
+      break;
+    }
+  }
+  return out;
 }
 
 function renderWho(people, onChange) {
