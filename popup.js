@@ -1067,32 +1067,29 @@ document.getElementById('open-options').addEventListener('click', () => {
 
 // ---- resizable popup -------------------------------------------------------
 
-const MIN_W = 360, MAX_W = 780, MIN_H = 200, MAX_H = 540;
-// Chrome hard-caps popups at 600px tall. If the document is taller, the
-// window clips and vertical resizing feels dead: the header, filters, and
-// footer are fixed costs, so the list must absorb the cap.
-const POPUP_MAX = 590;
+const { MIN_W, MAX_W, MIN_H, MAX_H } = PRBuddySizing;
 
 function chromeOverhead() {
   return document.body.scrollHeight - contentEl.offsetHeight;
 }
 
-// The saved size assumes the action popup, where the window follows the
-// body. In a real window (macOS-fullscreen detached popup, popup.html opened
-// as a tab/window) the window leads: a fixed 460px body leaves a dead gutter
-// on the right and a stub list above the fold. When the viewport is larger
-// than the box we asked for, fill it instead — except during a handle drag
-// (fill: false): the window shrinks with a lag there, and adopting its stale
-// size would make every shrink fight itself back to where it started.
+// All the action-popup vs real-window policy lives in sizing.js
+// (PRBuddySizing.computeSize) so the whole category is unit-tested; this is
+// just the DOM glue around it.
 function applySize(w, h, { fill = true } = {}) {
-  // Fill caps at MAX_W; body { margin-inline: auto } centers the column in
-  // anything wider, so a maximized window reads as a layout, not a bug.
-  if (fill && window.innerWidth > w + 4) w = Math.min(window.innerWidth, MAX_W);
-  document.body.style.width = `${w}px`;
-  const overhead = chromeOverhead();
-  let target = Math.min(h, Math.max(160, POPUP_MAX - overhead));
-  if (fill) target = Math.max(target, window.innerHeight - overhead);
-  contentEl.style.height = `${target}px`;
+  const opts = {
+    savedW: w,
+    savedH: h,
+    innerW: window.innerWidth,
+    innerH: window.innerHeight,
+    overhead: 0,
+    fill,
+  };
+  // Width first — it reflows the header, which changes the overhead the
+  // height calculation needs.
+  document.body.style.width = `${PRBuddySizing.computeSize(opts).w}px`;
+  opts.overhead = chromeOverhead();
+  contentEl.style.height = `${PRBuddySizing.computeSize(opts).h}px`;
 }
 
 function reclampSize() {

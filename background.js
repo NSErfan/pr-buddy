@@ -452,16 +452,25 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           break;
         }
         const tab = await findPrTab(message.key);
+        let focused = false;
         if (tab) {
           // Reload when there are unseen updates so the user lands on fresh content.
-          const prState = await getPrState();
-          const stale = hasUpdates(prState[message.key]);
-          await chrome.windows.update(tab.windowId, { focused: true });
-          await chrome.tabs.update(tab.id, { active: true });
-          if (stale) await chrome.tabs.reload(tab.id);
-          await markSeen(message.key);
-        } else if (message.url) {
-          // Tab was closed since the popup rendered: open the PR fresh.
+          try {
+            const prState = await getPrState();
+            const stale = hasUpdates(prState[message.key]);
+            await chrome.windows.update(tab.windowId, { focused: true });
+            await chrome.tabs.update(tab.id, { active: true });
+            if (stale) await chrome.tabs.reload(tab.id);
+            await markSeen(message.key);
+            focused = true;
+          } catch {
+            // The match went stale between lookup and focus (tab closed,
+            // window unfocusable) — same contract as the deduper: never eat
+            // the click, fall through to a fresh tab below.
+          }
+        }
+        if (!focused && message.url) {
+          // No live tab for this PR: open it fresh.
           await chrome.tabs.create({ url: message.url, active: true });
         }
         sendResponse({ ok: true });
@@ -518,6 +527,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       default:
         sendResponse({ ok: false });
     }
-  })();
+  })().catch((err) => {
+    // A handler that dies mid-way must still answer: the popup awaits this
+    // response, and an unhandled rejection here left it hanging forever on
+    // e.g. a tab that vanished between lookup and use.
+    console.warn('[pr-buddy] message handler failed:', message?.type, err);
+    try {
+      sendResponse({ ok: false, error: String(err) });
+    } catch {
+      // Channel already closed; nothing to answer.
+    }
+  });
   return true; // keep the message channel open for the async response
 });

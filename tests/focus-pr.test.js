@@ -317,3 +317,31 @@ describe('dedupe never eats a click', () => {
     assert.ok(bg.tabs.some((t) => t.id === 60), "the user's tab is still open");
   });
 });
+
+describe('every handler answers, even when it dies mid-way', () => {
+  const raced = (p) =>
+    Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('handler never answered — popup would hang')), 1000))]);
+
+  test('a crash mid-handler still resolves the popup with ok:false', async () => {
+    const bg = loadBackground({ tabs: [] });
+    // Both rungs of goto-url's fallback broken: get() rejects (default for a
+    // missing tab) and create() explodes too.
+    bg.sandbox.chrome.tabs.create = async () => {
+      throw new Error('boom');
+    };
+    const res = await raced(sendFocus(bg, { type: 'goto-url', tabId: 99, url: `${PR_A}#discussion_r1` }));
+    assert.equal(plain(res).ok, false);
+  });
+
+  test('focus-pr with a match that cannot be focused falls back to a fresh tab', async () => {
+    // Same never-eat-the-click contract as the deduper: a stale match
+    // (closed tab, unfocusable window) must not turn the click into nothing.
+    const bg = loadBackground({ tabs: [{ id: 1, url: PR_A, windowId: 10 }] });
+    bg.sandbox.chrome.windows.update = async () => {
+      throw new Error('window cannot be focused');
+    };
+    const res = await raced(sendFocus(bg, { type: 'focus-pr', key: 'acme/app#1', url: PR_A }));
+    assert.equal(plain(res).ok, true);
+    assert.deepEqual(plain(bg.calls.created), [{ url: PR_A, active: true }]);
+  });
+});
