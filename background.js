@@ -198,27 +198,37 @@ function consumeIntentionalDuplicate(key) {
 const dedupeExemptTabs = new Set();
 
 async function maybeRedirect(newTabId, url) {
-  const settings = await getSettings();
-  if (!settings.dedupe) return;
-
   const pr = parseTrackedUrl(url);
   if (!pr) return;
+
+  const settings = await getSettings();
+  if (!settings.dedupe) {
+    console.debug('[pr-buddy] dedupe: off in settings — leaving', pr.key, 'alone');
+    return;
+  }
 
   if (dedupeExemptTabs.has(newTabId)) return;
   if (consumeIntentionalDuplicate(pr.key)) {
     dedupeExemptTabs.add(newTabId);
+    console.debug('[pr-buddy] dedupe: tab', newTabId, 'is a deliberate duplicate of', pr.key);
     return;
   }
 
   const existing = await findPrTab(pr.key, newTabId, url);
-  if (!existing) return;
+  if (!existing) {
+    console.debug('[pr-buddy] dedupe: no existing tab for', pr.key, '— keeping tab', newTabId);
+    return;
+  }
 
   // Respect deliberate duplicates: cmd-click from the same PR's own tab.
   try {
     const newTab = await chrome.tabs.get(newTabId);
     if (newTab.openerTabId !== undefined) {
       const opener = await chrome.tabs.get(newTab.openerTabId);
-      if (parseTrackedUrl(opener.url)?.key === pr.key) return;
+      if (parseTrackedUrl(opener.url)?.key === pr.key) {
+        console.debug('[pr-buddy] dedupe: tab', newTabId, 'was opened from the PR itself — keeping it');
+        return;
+      }
     }
   } catch {
     // Tab already gone; nothing to redirect.
@@ -233,13 +243,26 @@ async function maybeRedirect(newTabId, url) {
   // visible opened. A brief two-tab flash beats a vanished click.
   try {
     await focusPrTab(existing, url);
-  } catch {
+  } catch (err) {
+    console.warn('[pr-buddy] dedupe: could not focus tab', existing.id, 'for', pr.key,
+      '— keeping the new tab', err);
     return;
   }
+  console.debug('[pr-buddy] dedupe: closing tab', newTabId, '→ tab', existing.id, 'for', pr.key);
   try {
     await chrome.tabs.remove(newTabId);
   } catch {
     // Already closed by the user/browser; the existing tab is focused.
+  }
+  // Removing the tab the browser considers current makes some browsers
+  // (Arc-style sidebars, anything with its own "previous tab" memory) restore
+  // THEIR last-active tab — stomping the focus set above and dumping the user
+  // back where they were. Assert the destination again after the removal.
+  try {
+    await chrome.windows.update(existing.windowId, { focused: true });
+    await chrome.tabs.update(existing.id, { active: true });
+  } catch {
+    // The existing tab vanished in the gap; nothing left to re-assert.
   }
 }
 

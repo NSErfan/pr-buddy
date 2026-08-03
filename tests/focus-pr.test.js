@@ -12,7 +12,9 @@ const vm = require('node:vm');
 const ROOT = path.join(__dirname, '..');
 
 function loadBackground({ tabs = [], storage = {} } = {}) {
-  const calls = { created: [], activated: [], focusedWindows: [], reloaded: [], removed: [] };
+  // `order` interleaves activations and removals so tests can assert
+  // sequencing, not just occurrence.
+  const calls = { created: [], activated: [], focusedWindows: [], reloaded: [], removed: [], order: [] };
   let nextTabId = 1000;
 
   const chrome = {
@@ -27,6 +29,7 @@ function loadBackground({ tabs = [], storage = {} } = {}) {
       get: async (id) => tabs.find((t) => t.id === id) || Promise.reject(new Error('no tab')),
       update: async (id, props) => {
         calls.activated.push({ id, props });
+        if (props.active) calls.order.push(`activate:${id}`);
         return tabs.find((t) => t.id === id);
       },
       create: async (props) => {
@@ -37,6 +40,7 @@ function loadBackground({ tabs = [], storage = {} } = {}) {
       },
       remove: async (id) => {
         calls.removed.push(id);
+        calls.order.push(`remove:${id}`);
         const i = tabs.findIndex((t) => t.id === id);
         if (i >= 0) tabs.splice(i, 1);
       },
@@ -173,6 +177,43 @@ describe('deliberate duplicates survive dedupe', () => {
   });
 });
 
+describe('external link dedupe (the reason this extension exists)', () => {
+  // The real-world shape: the user reads a dashboard (Crashlytics, Jira,
+  // Slack web) in the same window where the PR is already open — often twice,
+  // as conversation + files side by side — and clicks a PR link on that page.
+  // The born tab therefore HAS an openerTabId, and the opener is not a PR:
+  // none of the older tests covered that path.
+  test('a PR link clicked on another site closes the newcomer and focuses the conversation tab', async () => {
+    const bg = loadBackground({
+      tabs: [
+        { id: 1, url: 'https://console.firebase.google.com/project/x/crashlytics', windowId: 10 },
+        { id: 2, url: PR_B, windowId: 10 }, // conversation
+        { id: 3, url: PR_B + '/files', windowId: 10 }, // files, same PR
+      ],
+    });
+    const born = { id: 99, url: PR_B, windowId: 10, openerTabId: 1 };
+    bg.tabs.push(born);
+    await simulateTabBirth(bg, born);
+    assert.deepEqual(plain(bg.calls.removed), [99], 'the newcomer must be closed');
+    assert.ok(bg.calls.activated.some((a) => a.id === 2 && a.props.active),
+      'the conversation tab (not the files tab) must be focused');
+    assert.ok(bg.calls.focusedWindows.some((w) => w.id === 10), 'its window must be raised');
+    // Some browsers restore their own notion of "previous tab" when the
+    // active tab is removed; focus must be asserted again AFTER the removal.
+    const removalAt = bg.calls.order.indexOf('remove:99');
+    const lastFocusAt = bg.calls.order.lastIndexOf('activate:2');
+    assert.ok(lastFocusAt > removalAt, 'focus must be re-asserted after the removal');
+  });
+
+  test('a PR link clicked on the PR itself is a deliberate duplicate and survives', async () => {
+    const bg = loadBackground({ tabs: [{ id: 2, url: PR_B, windowId: 10 }] });
+    const born = { id: 99, url: PR_B + '/files', windowId: 10, openerTabId: 2 };
+    bg.tabs.push(born);
+    await simulateTabBirth(bg, born);
+    assert.deepEqual(plain(bg.calls.removed), [], 'cmd-click from the PR must keep its tab');
+  });
+});
+
 describe('index-pr (background indexing for the Files tab)', () => {
   test('opens an inactive tab, waits for indexing, closes it, reports ok', async () => {
     const bg = loadBackground({ tabs: [] });
@@ -289,7 +330,10 @@ describe('dedupe never eats a click', () => {
     const dup = { id: 51, url: PR_A, windowId: 20 };
     bg.tabs.push(dup);
     await simulateTabBirth(bg, dup);
-    assert.deepEqual(order, ['focus-window:10', 'remove:51']);
+    // Focus precedes removal (prove the destination is alive before the
+    // newcomer dies), and is asserted AGAIN afterwards for browsers whose own
+    // previous-tab memory overrides it when the current tab is removed.
+    assert.deepEqual(order, ['focus-window:10', 'remove:51', 'focus-window:10']);
   });
 
   test("an index temp tab never counts as the PR's open tab", async () => {
