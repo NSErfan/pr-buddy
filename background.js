@@ -248,6 +248,33 @@ async function maybeRedirect(newTabId, url) {
       '— keeping the new tab', err);
     return;
   }
+
+  // Focusing is not showing. Sidebar browsers with their own "space" model
+  // (Dia) accept windows.update/tabs.update calls for a tab in another space
+  // and then simply don't switch to it — the API reports success, the user
+  // still sees their old page, and closing the newcomer would eat the click.
+  // So verify the tab actually became visible; if the browser refused, bring
+  // the loaded tab TO the user instead: move it into the window the click
+  // happened in, beside the newcomer, and activate it there.
+  let landed = await settleAndVerify(existing.id);
+  if (!landed) {
+    try {
+      const born = await chrome.tabs.get(newTabId);
+      await chrome.tabs.move(existing.id, { windowId: born.windowId, index: born.index ?? -1 });
+      await chrome.tabs.update(existing.id, { active: true });
+      console.debug('[pr-buddy] dedupe: browser refused to show tab', existing.id,
+        '— moved it into window', born.windowId);
+      landed = await settleAndVerify(existing.id);
+    } catch (err) {
+      console.warn('[pr-buddy] dedupe: could not relocate tab', existing.id, err);
+    }
+  }
+  if (!landed) {
+    console.warn('[pr-buddy] dedupe: tab', existing.id, 'never became visible — keeping tab',
+      newTabId, 'so the click still lands somewhere');
+    return;
+  }
+
   console.debug('[pr-buddy] dedupe: closing tab', newTabId, '→ tab', existing.id, 'for', pr.key);
   try {
     await chrome.tabs.remove(newTabId);
@@ -255,15 +282,52 @@ async function maybeRedirect(newTabId, url) {
     // Already closed by the user/browser; the existing tab is focused.
   }
   // Removing the tab the browser considers current makes some browsers
-  // (Arc-style sidebars, anything with its own "previous tab" memory) restore
-  // THEIR last-active tab — stomping the focus set above and dumping the user
-  // back where they were. Assert the destination again after the removal.
+  // restore THEIR last-active tab — stomping the focus set above and dumping
+  // the user back where they were. Assert the destination again after the
+  // removal (re-fetch first: the move above may have changed its window).
   try {
-    await chrome.windows.update(existing.windowId, { focused: true });
-    await chrome.tabs.update(existing.id, { active: true });
+    const t = await chrome.tabs.get(existing.id);
+    await chrome.windows.update(t.windowId, { focused: true });
+    await chrome.tabs.update(t.id, { active: true });
   } catch {
     // The existing tab vanished in the gap; nothing left to re-assert.
   }
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Settle delays after a focus attempt, before trusting what the browser
+// reports. Tests shrink these so the suite stays fast.
+const SETTLE_DELAYS_MS = self.__prBuddyTestDelays || [120, 250];
+
+// "The user can actually see this tab": it is its window's active tab AND
+// that window has focus. Anything less means the focus calls were accepted
+// but not honored.
+async function tabShown(tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab.active) return false;
+    const win = await chrome.windows.get(tab.windowId);
+    return win.focused !== false; // some browsers omit `focused`; trust those
+  } catch {
+    return false;
+  }
+}
+
+// Give the browser a beat to honor the focus calls; nudge once and give it
+// one more beat before concluding it refused.
+async function settleAndVerify(tabId) {
+  await sleep(SETTLE_DELAYS_MS[0]);
+  if (await tabShown(tabId)) return true;
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    await chrome.windows.update(tab.windowId, { focused: true });
+    await chrome.tabs.update(tabId, { active: true });
+  } catch {
+    return false;
+  }
+  await sleep(SETTLE_DELAYS_MS[1]);
+  return tabShown(tabId);
 }
 
 // Focus a PR tab and land on targetUrl without reloading if we can avoid it.

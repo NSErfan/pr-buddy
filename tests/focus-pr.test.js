@@ -11,11 +11,14 @@ const vm = require('node:vm');
 
 const ROOT = path.join(__dirname, '..');
 
-function loadBackground({ tabs = [], storage = {} } = {}) {
+function loadBackground({ tabs = [], storage = {}, focusedWindowId = null } = {}) {
   // `order` interleaves activations and removals so tests can assert
   // sequencing, not just occurrence.
-  const calls = { created: [], activated: [], focusedWindows: [], reloaded: [], removed: [], order: [] };
+  const calls = { created: [], activated: [], focusedWindows: [], reloaded: [], removed: [], moved: [], order: [] };
   let nextTabId = 1000;
+  // Which window the (mock) browser actually shows — the deduper now verifies
+  // visibility (tab.active + window.focused), so the mock must model it.
+  const state = { focusedWindowId };
 
   const chrome = {
     tabs: {
@@ -29,12 +32,18 @@ function loadBackground({ tabs = [], storage = {} } = {}) {
       get: async (id) => tabs.find((t) => t.id === id) || Promise.reject(new Error('no tab')),
       update: async (id, props) => {
         calls.activated.push({ id, props });
-        if (props.active) calls.order.push(`activate:${id}`);
+        if (props.active) {
+          calls.order.push(`activate:${id}`);
+          const target = tabs.find((t) => t.id === id);
+          if (target) {
+            for (const t of tabs) if (t.windowId === target.windowId) t.active = t.id === id;
+          }
+        }
         return tabs.find((t) => t.id === id);
       },
       create: async (props) => {
         calls.created.push(props);
-        const t = { id: nextTabId++, url: props.url, windowId: 1 };
+        const t = { id: nextTabId++, url: props.url, windowId: 1, active: !!props.active };
         tabs.push(t);
         return t;
       },
@@ -43,6 +52,14 @@ function loadBackground({ tabs = [], storage = {} } = {}) {
         calls.order.push(`remove:${id}`);
         const i = tabs.findIndex((t) => t.id === id);
         if (i >= 0) tabs.splice(i, 1);
+      },
+      move: async (id, props) => {
+        calls.moved.push({ id, props });
+        calls.order.push(`move:${id}`);
+        const t = tabs.find((x) => x.id === id);
+        if (!t) throw new Error('no tab to move');
+        t.windowId = props.windowId ?? t.windowId;
+        return t;
       },
       reload: async (id) => calls.reloaded.push(id),
       sendMessage: async () => {
@@ -54,7 +71,11 @@ function loadBackground({ tabs = [], storage = {} } = {}) {
       onActivated: { addListener() {} },
     },
     windows: {
-      update: async (id, props) => calls.focusedWindows.push({ id, props }),
+      update: async (id, props) => {
+        calls.focusedWindows.push({ id, props });
+        if (props.focused) state.focusedWindowId = id;
+      },
+      get: async (id) => ({ id, focused: id === state.focusedWindowId }),
     },
     storage: {
       local: {
@@ -83,6 +104,7 @@ function loadBackground({ tabs = [], storage = {} } = {}) {
   const sandbox = {
     chrome, console, URL, URLSearchParams,
     fetch: async () => ({ ok: false }), setTimeout, clearTimeout,
+    __prBuddyTestDelays: [5, 5], // shrink visibility-settle waits
   };
   sandbox.self = sandbox;
   sandbox.globalThis = sandbox;
@@ -107,7 +129,9 @@ async function simulateTabBirth(bg, tab) {
   bg.calls.onTabCreated({ id: tab.id, pendingUrl: tab.url, windowId: tab.windowId ?? 1 });
   await new Promise((r) => setTimeout(r, 5));
   bg.calls.onNavCommitted({ tabId: tab.id, frameId: 0, url: tab.url });
-  await new Promise((r) => setTimeout(r, 20));
+  // Dedupe now includes settle-and-verify sleeps (shrunk via
+  // __prBuddyTestDelays); wait long enough for the whole ladder.
+  await new Promise((r) => setTimeout(r, 100));
 }
 
 const PR_A = 'https://github.com/acme/app/pull/1';
@@ -211,6 +235,47 @@ describe('external link dedupe (the reason this extension exists)', () => {
     bg.tabs.push(born);
     await simulateTabBirth(bg, born);
     assert.deepEqual(plain(bg.calls.removed), [], 'cmd-click from the PR must keep its tab');
+  });
+});
+
+describe('sidebar browsers that refuse cross-space focus (Dia)', () => {
+  // Observed live in Dia: the PR lives in another "space" (a window the
+  // windows API cannot focus). The old code focused it blind, the API
+  // reported success, the user stayed on their old page, and the newcomer —
+  // the only visible copy of the PR — was closed. The click was eaten.
+
+  test('when focus is refused, the existing tab is MOVED into the click\'s window', async () => {
+    const bg = loadBackground({
+      tabs: [{ id: 2, url: PR_B, windowId: 20 }], // PR lives in another space
+      focusedWindowId: 10, // the user's space
+    });
+    // Dia-style: window focus calls are accepted but not honored.
+    bg.sandbox.chrome.windows.update = async () => {};
+    const born = { id: 99, url: PR_B, windowId: 10 };
+    bg.tabs.push(born);
+    await simulateTabBirth(bg, born);
+    assert.deepEqual(plain(bg.calls.moved), [{ id: 2, props: { windowId: 10, index: -1 } }],
+      'the loaded PR tab must be brought to the user');
+    assert.deepEqual(plain(bg.calls.removed), [99], 'then the newcomer closes');
+    const moved = bg.tabs.find((t) => t.id === 2);
+    assert.equal(moved.windowId, 10);
+    assert.equal(moved.active, true, 'and the moved tab is the visible one');
+  });
+
+  test('when nothing can make the existing tab visible, the newcomer survives', async () => {
+    const bg = loadBackground({
+      tabs: [{ id: 2, url: PR_B, windowId: 20 }],
+      focusedWindowId: 10,
+    });
+    bg.sandbox.chrome.windows.update = async () => {};
+    bg.sandbox.chrome.tabs.move = async () => {
+      throw new Error('this browser refuses to move tabs between spaces');
+    };
+    const born = { id: 99, url: PR_B, windowId: 10 };
+    bg.tabs.push(born);
+    await simulateTabBirth(bg, born);
+    assert.deepEqual(plain(bg.calls.removed), [],
+      'the click must never be eaten: the newcomer stays as the visible copy');
   });
 });
 
