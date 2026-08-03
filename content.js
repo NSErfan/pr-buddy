@@ -13,6 +13,16 @@
   if (window.__prBuddyContentLoaded) return; // guard against double injection
   window.__prBuddyContentLoaded = true;
 
+  // Diagnostic beacon: <html data-pr-buddy="0.21.2">. Whether the extension
+  // is alive in a given browser/profile keeps coming up ("is it even
+  // installed HERE?") and content-script globals are invisible to the page —
+  // a DOM attribute is checkable from DevTools or by any inspection tool.
+  try {
+    document.documentElement.dataset.prBuddy = chrome.runtime.getManifest().version;
+  } catch {
+    // Extension context gone mid-navigation; purely cosmetic.
+  }
+
   const PAGE_RE = /^\/[^/]+\/[^/]+\/(?:pull\/\d+|commit\/[0-9a-f]+)(?:\/|$)/i;
   const MAX_ROUNDS = 60; // safety cap on "Load more" clicks
   const LOAD_TIMEOUT_MS = 10_000;
