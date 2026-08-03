@@ -8,6 +8,29 @@ const Cache = require('../cache.js');
 const DAY = 24 * 60 * 60 * 1000;
 const TTL = Cache.CACHE_TTL_MS;
 
+// ---- the UMD wrapper itself ------------------------------------------------
+
+describe('module export', () => {
+  test('sets the global even when a CommonJS-looking `module` exists (Dia content worlds)', () => {
+    // Observed live in Dia 2026-08: its content-script world defines a
+    // `module` global, so an either/or UMD exported into that phantom and
+    // content.js found no self.PRBuddyCache — indexing died on line 1.
+    const vm = require('node:vm');
+    const fs = require('node:fs');
+    const sandbox = { module: { exports: {} }, console };
+    sandbox.self = sandbox;
+    vm.runInContext(
+      fs.readFileSync(require.resolve('../cache.js'), 'utf8'),
+      vm.createContext(sandbox),
+    );
+    assert.equal(typeof sandbox.self.PRBuddyCache, 'object',
+      'the global binding must be set regardless of `module`');
+    assert.equal(typeof sandbox.self.PRBuddyCache.deferredThreadContainers, 'function');
+    assert.equal(typeof sandbox.module.exports.prCacheKey, 'function',
+      'CommonJS consumers (the test suite) still get their export');
+  });
+});
+
 // ---- helpers ---------------------------------------------------------------
 
 function makeDoc(bodyHtml) {

@@ -16,8 +16,13 @@
 
 (function (root, factory) {
   const api = factory();
+  // Node (tests) takes the CommonJS export — but the global binding is set
+  // UNCONDITIONALLY, never `else`. Some browsers (Dia) define a
+  // CommonJS-looking `module` global inside content-script worlds; the old
+  // either/or wrapper exported into that phantom and left the content script
+  // without self.PRBuddyCache, killing indexing in those browsers only.
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
-  else root.PRBuddyCache = api;
+  if (root) root.PRBuddyCache = api;
 })(typeof self !== 'undefined' ? self : globalThis, function () {
   const CACHE_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 
